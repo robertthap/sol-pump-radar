@@ -1,0 +1,20 @@
+{
+  "name": "@spr/worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx --tsconfig ../../tsconfig.cli.json --import ../../scripts/preload-cli.ts src/main.ts",
+    "typecheck": "tsc --noEmit -p ../../tsconfig.cli.json"
+  },
+  "dependencies": {
+    "@spr/core": "workspace:*",
+    "@spr/db": "workspace:*",
+    "drizzle-orm": "^0.36.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.10",
+    "tsx": "^4.22.3",
+    "typescript": "^5.6.3"
+  }
+}

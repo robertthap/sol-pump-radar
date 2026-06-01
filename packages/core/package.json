@@ -1,0 +1,29 @@
+{
+  "name": "@spr/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./events": "./src/events.ts",
+    "./trade-state": "./src/trade-state.ts",
+    "./trade-fsm": "./src/trade-fsm.ts",
+    "./reconcile": "./src/reconcile.ts",
+    "./metrics": "./src/metrics.ts",
+    "./replay": "./src/replay.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@spr/db": "workspace:*",
+    "drizzle-orm": "^0.36.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.10",
+    "tsx": "^4.22.3",
+    "typescript": "^5.6.3"
+  }
+}

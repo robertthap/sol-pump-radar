@@ -1,0 +1,11 @@
+{
+  "name": "@spr/web",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Next.js UI lives at repo root until full move (PR10). These scripts delegate to the root app.",
+  "scripts": {
+    "dev": "pnpm --dir ../.. dev",
+    "build": "pnpm --dir ../.. build",
+    "start": "pnpm --dir ../.. start"
+  }
+}
