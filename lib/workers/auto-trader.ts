@@ -858,6 +858,8 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
         smartMoneyCount: insider.smartMoneyCount,
         insiderBoost: qual.insiderBoost,
         entry_tier: entryTier,
+        // L0.2: token age (seconds) at entry — our reaction time. Lower = faster.
+        entry_age_seconds: timingAge ?? null,
       };
       if (tagDemo) entryFeatures.ui_mode = "demo";
 

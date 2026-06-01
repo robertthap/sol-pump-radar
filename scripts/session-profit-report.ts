@@ -13,6 +13,7 @@ import {
   fetchByExitReason,
   fetchByAction,
   fetchTierOverall,
+  fetchEntryReaction,
   type OverallStats,
 } from "../lib/db/repos/performance";
 import { listRecentChanges } from "../lib/db/repos/tuner";
@@ -42,17 +43,22 @@ async function main() {
   console.log("\n=== Session profit report (last 7 days, auto paper) ===\n");
 
   const hours = 24 * 7;
-  const [overall, strict, relaxed, byReason, byAction, changes] = await Promise.all([
+  const [overall, strict, relaxed, byReason, byAction, changes, reaction] = await Promise.all([
     fetchAutoPaperOverall(hours),
     fetchTierOverall("strict", hours),
     fetchTierOverall("relaxed", hours),
     fetchByExitReason(),
     fetchByAction(),
     listRecentChanges(10),
+    fetchEntryReaction(hours),
   ]);
 
   console.log("Overall");
   printOverall("auto (7d)", overall);
+  console.log(
+    `  reaction time (token age at entry): p50=${reaction.p50 == null ? "—" : Math.round(reaction.p50) + "s"} ` +
+      `p95=${reaction.p95 == null ? "—" : Math.round(reaction.p95) + "s"}  (n=${reaction.n})`,
+  );
   if (overall.trades === 0) {
     console.log("\n  ⚠ No closed auto trades in the window — the bottleneck is ENTRIES.");
     console.log("    Check: worker running? SIGNAL_MODE=hybrid? fresh launches in decision_log?\n");

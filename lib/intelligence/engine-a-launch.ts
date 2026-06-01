@@ -193,6 +193,12 @@ export function evaluateEngineA(
       uniqueBuyers: input.unique_wallets_5m,
       buySellRatio: input.buy_sell_ratio,
       priceImpulsePct: input.price_change_m5,
+      // L2.3 anti-rug: feed real veto signals into the velocity model.
+      rugFingerprint: risk.rug,
+      bundleLaunch: risk.bundle,
+      // A "launch" with no organic participation (only the creator) is a
+      // single-wallet/farm setup — hard-veto for newborn entries.
+      singleWalletLaunch: input.unique_wallets_5m <= 1,
     },
     { ...DEFAULT_VELOCITY_CONFIG, minVSol: Math.max(1, cfg.engineA.liqFloorUsd) },
   );

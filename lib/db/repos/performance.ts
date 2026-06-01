@@ -368,6 +368,25 @@ async function fetchClosedPaperAgg(extraFilter: ReturnType<typeof sql>, hours?: 
   return mapClosedPaperAgg((res as unknown as { rows: ClosedPaperAggRow[] }).rows[0]);
 }
 
+/** Reaction time = token age (s) at entry for auto trades (L0.2). Lower = faster. */
+export async function fetchEntryReaction(
+  hours = 168,
+): Promise<{ n: number; p50: number | null; p95: number | null }> {
+  const res = await getDb().execute(sql`
+    SELECT
+      COUNT(*)::int AS n,
+      percentile_cont(0.5) WITHIN GROUP (ORDER BY (entry_features->>'entry_age_seconds')::float8) AS p50,
+      percentile_cont(0.95) WITHIN GROUP (ORDER BY (entry_features->>'entry_age_seconds')::float8) AS p95
+    FROM ${sql.raw(PAPER_TRADES_READ)}
+    WHERE status = 'closed'
+      AND entry_features ? 'entry_age_seconds'
+      AND entry_features->>'auto' = 'true'
+      AND closed_at > now() - (${sql.raw(String(hours))} || ' hours')::interval
+  `);
+  const r = (res as unknown as { rows: Array<{ n: number; p50: number | null; p95: number | null }> }).rows[0];
+  return { n: r?.n ?? 0, p50: r?.p50 ?? null, p95: r?.p95 ?? null };
+}
+
 /** Auto-trader paper trades for a given entry tier (strict|relaxed). */
 export async function fetchTierOverall(
   tier: "strict" | "relaxed",
