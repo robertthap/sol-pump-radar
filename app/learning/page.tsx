@@ -4,7 +4,7 @@ import { RugInsightsPanel } from "@/components/RugInsightsPanel";
 
 export default function LearningPage() {
   return (
-    <main className="mx-auto max-w-[1600px] px-4 pb-24">
+    <main className="app-page app-page-wide">
       <div className="mb-3">
         <h1 className="text-base font-semibold tracking-tight">Learning</h1>
         <p className="text-[11px] text-muted">

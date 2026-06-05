@@ -105,15 +105,31 @@ function normalize(c: PumpFunCoinRaw): PumpFunCoin {
   };
 }
 
+// Short TTL cache for single-coin lookups. The worker now resolves the live mcap
+// for every open position each exit tick (plus once at entry); without this the
+// pump API gets hammered and rate-limits to nulls. 8s is fresh enough for mcap
+// display/exit, and we serve the last good value on a transient error.
+const coinCache = new Map<string, { coin: PumpFunCoin | null; ts: number }>();
+const COIN_CACHE_TTL_MS = 8_000;
+const COIN_CACHE_MAX = 1_000;
+
 export async function fetchPumpFunCoin(mint: string): Promise<PumpFunCoin | null> {
+  const cached = coinCache.get(mint);
+  const now = Date.now();
+  if (cached && now - cached.ts < COIN_CACHE_TTL_MS) return cached.coin;
   try {
     const raw = await fetchPumpJson<PumpFunCoinRaw>(
       `${BASE}/coins/${encodeURIComponent(mint)}`,
       PUMP_TRADE_TIMEOUT_MS,
     );
-    if (!isPumpFunCoin(raw)) return null;
-    return normalize(raw);
+    const coin = isPumpFunCoin(raw) ? normalize(raw) : null;
+    if (coinCache.size >= COIN_CACHE_MAX) coinCache.clear();
+    coinCache.set(mint, { coin, ts: now });
+    return coin;
   } catch {
+    // Serve the last good value through transient errors/rate limits rather than
+    // null-flapping (which would drop us back to the curve estimate).
+    if (cached) return cached.coin;
     return null;
   }
 }

@@ -37,6 +37,36 @@ export async function getUiTradingMode(): Promise<UiTradingMode | null> {
   return null;
 }
 
+/**
+ * True only when there is a LIVE trading session for `mode` — an active
+ * auto-trader session for the matching executor, or an open position. A persisted
+ * mode setting alone (the user picked Demo/Real on a previous run) does NOT count,
+ * so a freshly-started, idle app shows the wallet chooser rather than a phantom
+ * "ongoing session".
+ */
+export async function hasActiveTradingSession(mode: UiTradingMode | null): Promise<boolean> {
+  if (mode == null) return false;
+  const hasRows = (r: unknown): boolean =>
+    ((r as { rows?: unknown[] }).rows?.length ?? 0) > 0;
+
+  const wantMode = mode === "real" ? "live" : "paper";
+  const auto = await getDb().execute(
+    sql`SELECT 1 FROM auto_sessions WHERE status = 'active' AND mode = ${wantMode} LIMIT 1`,
+  );
+  if (hasRows(auto)) return true;
+
+  if (mode === "demo") {
+    const open = await getDb().execute(
+      sql`SELECT 1 FROM paper_positions WHERE state = 'OPEN' AND ${demoWalletTradeSql} LIMIT 1`,
+    );
+    return hasRows(open);
+  }
+  const live = await getDb().execute(
+    sql`SELECT 1 FROM live_trades WHERE status <> 'closed' LIMIT 1`,
+  );
+  return hasRows(live);
+}
+
 export async function setUiTradingMode(mode: UiTradingMode): Promise<void> {
   await getDb()
     .insert(userSettings)
@@ -45,6 +75,11 @@ export async function setUiTradingMode(mode: UiTradingMode): Promise<void> {
       target: userSettings.key,
       set: { value: mode, updatedAt: new Date() },
     });
+}
+
+/** Clears UI trading mode so the user must pick Demo or Real again on the home page. */
+export async function clearUiTradingMode(): Promise<void> {
+  await getDb().delete(userSettings).where(eq(userSettings.key, KEY_MODE));
 }
 
 export async function getDemoStartSol(): Promise<number> {
@@ -92,31 +127,43 @@ async function setDemoPnlOffset(offset: number): Promise<void> {
  * Worker-only: close open demo-wallet positions via paperClose and reset PnL offset.
  * Invoked by demo-reset-listener after DEMO_RESET_REQUESTED.
  */
+/**
+ * Full "new demo account" reset: wipe the USER's demo trading state (open + closed
+ * positions, fills, wallet balance, session stats) so it looks like a brand-new
+ * account. The SYSTEM's learning is intentionally PRESERVED — tuner_changes,
+ * learned_rules, decision_log, trade_outcomes, and all market data are untouched,
+ * so the bot keeps everything it has learned. (Learning is system state, not the
+ * user's wallet.)
+ */
 export async function executeDemoWalletReset(): Promise<DemoAccountSnapshot> {
-  const { paperClose } = await import("@/lib/paper/engine");
+  const startSol = await getDemoStartSol();
 
-  const openRes = await getDb().execute(sql`
-    SELECT id::text AS id
-    FROM paper_positions
-    WHERE state = 'OPEN' AND ${demoWalletTradeSql}
+  // 1. Delete the demo wallet's trade history (open + closed) + their fills.
+  //    Scoped to the demo wallet only — live trades + shadow-learn are untouched.
+  await getDb().execute(sql`
+    DELETE FROM paper_trade_fills
+    WHERE position_id IN (SELECT id FROM paper_positions WHERE ${demoWalletTradeSql})
   `);
-  type OpenRow = { id: string };
-  for (const row of (openRes as unknown as { rows: OpenRow[] }).rows) {
-    const closed = await paperClose({
-      positionId: BigInt(row.id),
-      reason: "demo_reset",
-    });
-    if (!closed.ok) {
-      throw new Error(closed.reason || closed.code || "demo_reset_close_failed");
-    }
-  }
+  await getDb().execute(sql`DELETE FROM paper_positions WHERE ${demoWalletTradeSql}`);
 
-  const raw = await getDb().execute(sql`
-    SELECT COALESCE(SUM(realized_pnl_sol) FILTER (WHERE state = 'CLOSED'), 0)::float8 AS realized
-    FROM paper_positions WHERE ${demoWalletTradeSql}
-  `);
-  const realized = (raw as unknown as { rows: Array<{ realized: number }> }).rows[0]?.realized ?? 0;
-  await setDemoPnlOffset(realized);
+  // 2. Reset the virtual wallet ledger + the display PnL offset to a fresh start.
+  await setDemoPnlOffset(0);
+  await getDb()
+    .execute(sql`
+      UPDATE paper_portfolio
+      SET balance_sol = ${startSol}, realized_pnl_sol = 0, unrealized_pnl_sol = 0,
+          equity_sol = ${startSol}, peak_equity_sol = ${startSol}, wins = 0, losses = 0,
+          updated_at = now()
+      WHERE id = 1
+    `)
+    .catch(() => undefined);
+
+  // 3. Zero the active auto session's stats so the hero + insights show a fresh
+  //    account, while keeping the session ACTIVE so auto-trade keeps running.
+  await getDb()
+    .execute(sql`UPDATE auto_sessions SET stats = '{}'::jsonb WHERE status = 'active'`)
+    .catch(() => undefined);
+
   return fetchDemoAccount();
 }
 

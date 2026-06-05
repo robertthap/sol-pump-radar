@@ -68,8 +68,8 @@ export function ClustersPanel() {
         <div>
           <h2 className="text-base font-semibold tracking-tight">Wallet rings</h2>
           <p className="text-xs text-muted">
-            Wallets that consistently buy the same mints in the same launch window — likely
-            coordinated. Bundle rings are highest-risk (paper §4.3.1).
+            Wallets that consistently buy the same mints in the same launch window - likely
+            coordinated. Bundle rings are highest-risk.
           </p>
         </div>
         <div className="flex items-center gap-0 rounded-md border border-border p-0.5">
@@ -89,11 +89,11 @@ export function ClustersPanel() {
           ))}
         </div>
       </div>
-      {loading && clusters.length === 0 && <div className="text-xs text-muted">loading…</div>}
+      {loading && clusters.length === 0 && <div className="text-xs text-muted">loading...</div>}
       {err && <div className="text-xs text-bad">{err}</div>}
       {!loading && clusters.length === 0 && (
         <div className="rounded-md border border-border bg-bg/40 p-4 text-center text-xs text-muted">
-          no rings detected yet — clusterer runs every 10 minutes; first run is ~1.5min after boot
+          No rings detected yet - scanner runs every 10 minutes; first run is ~1.5 min after boot
         </div>
       )}
       <div className="space-y-2">
@@ -104,7 +104,7 @@ export function ClustersPanel() {
               <button
                 type="button"
                 onClick={() => setExpanded(isOpen ? null : c.id)}
-                className="flex w-full flex-wrap items-center justify-between gap-2 px-3 py-2 text-left hover:bg-white/5"
+                className="flex w-full flex-wrap items-center justify-between gap-2 px-3 py-2 text-left hover:bg-panel/5"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`pill-side ${kindCls(c.kind)}`}>{c.kind.replace("_", " ")}</span>
@@ -116,7 +116,7 @@ export function ClustersPanel() {
                 <div className="flex items-center gap-2 text-[10px] text-muted">
                   <span>conf {(c.confidence * 100).toFixed(0)}%</span>
                   <span>{relTime(c.updatedAt)}</span>
-                  <span>{isOpen ? "▾" : "▸"}</span>
+                  <span>{isOpen ? "v" : ">"}</span>
                 </div>
               </button>
               {isOpen && (
@@ -148,7 +148,7 @@ export function ClustersPanel() {
                     <div className="mt-1 flex flex-wrap gap-1">
                       {c.members.slice(0, 30).map((w) => (
                         <code key={w} className="rounded border border-border/60 bg-bg/60 px-1.5 py-0.5 text-[10px]">
-                          {w.slice(0, 6)}…{w.slice(-4)}
+                          {w.slice(0, 6)}...{w.slice(-4)}
                         </code>
                       ))}
                       {c.members.length > 30 && (

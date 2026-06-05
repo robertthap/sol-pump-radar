@@ -288,19 +288,24 @@ async function refreshWalletProfilesBatch() {
     let totalTrades = 0;
     let firstSeen: Date | null = null;
     let lastSeen: Date | null = null;
+    let fullyClosed = 0;
     for (const m of perMint) {
       totalTrades += m.n;
       const f = new Date(m.first_ts);
       const l = new Date(m.last_ts);
       if (!firstSeen || f < firstSeen) firstSeen = f;
       if (!lastSeen || l > lastSeen) lastSeen = l;
+      if (m.sol_in <= 1e-6) continue; // no real buy leg to measure
       const remainingTokens = m.tok_in - m.tok_out;
-      const closed = remainingTokens <= 0.05 * Math.max(1e-6, m.tok_in);
-      if (closed && m.sol_in > 1e-6) {
-        const ret = (m.sol_out - m.sol_in) / m.sol_in;
-        if (Number.isFinite(ret) && ret > -1.5 && ret < 50) {
-          closedReturns.push(ret);
-        }
+      if (remainingTokens <= 0.05 * Math.max(1e-6, m.tok_in)) fullyClosed++;
+      // GMGN-style realized return: SOL out vs SOL in across the WHOLE position.
+      // Tokens the wallet never sold are valued at ~0 — on pump.fun an un-exited
+      // bag is almost always a loss. Scoring EVERY position (not just the ones the
+      // wallet fully sold) removes the survivorship bias where only sold winners
+      // counted and dead bags were invisible (which inflated losers into "smart").
+      const ret = (m.sol_out - m.sol_in) / m.sol_in;
+      if (Number.isFinite(ret) && ret >= -1 && ret < 50) {
+        closedReturns.push(ret);
       }
     }
 
@@ -341,7 +346,10 @@ async function refreshWalletProfilesBatch() {
       wallet,
       tradeCount: totalTrades,
       distinctMints: perMint.length,
-      closedMints: n,
+      // closedMints = positions the wallet actually fully exited (real sell history),
+      // used by the smart-money filter so pure bag-holders don't qualify. avg/std/
+      // t_stat below are computed over ALL scored positions (incl. unsold bags @ ~0).
+      closedMints: fullyClosed,
       avgReturn: avg,
       stdReturn: std,
       tStat,

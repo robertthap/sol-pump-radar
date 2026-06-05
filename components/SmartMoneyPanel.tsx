@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useState } from "react";
 import { useVisibleInterval } from "@/lib/ui/useVisibleInterval";
+import { CopyButton } from "@/components/CopyButton";
 
 type Row = {
   wallet: string;
@@ -137,7 +138,9 @@ export function SmartMoneyPanel() {
                 const clean = !sniperHeavy && !bundleHeavy && !inBundleRing && !inSniperRing;
                 return (
                   <tr key={r.wallet} className="row-hover">
-                    <td className="font-mono text-accent">{shortWallet(r.wallet)}</td>
+                    <td>
+                      <CopyButton value={r.wallet} label={shortWallet(r.wallet)} title="Copy wallet address" />
+                    </td>
                     <td className="text-right font-mono">{r.tStat?.toFixed(2) ?? "—"}</td>
                     <td className={`text-right font-mono ${cls(r.avgReturn)}`}>{pct(r.avgReturn)}</td>
                     <td className={`text-right font-mono ${cls(r.last5Return)}`}>{pct(r.last5Return)}</td>

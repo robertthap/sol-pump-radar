@@ -27,6 +27,7 @@ import { hasMaterialChange } from "@/lib/intelligence/eval-scheduler";
 import { enqueueDbWrite } from "@/lib/db/write-queue";
 
 import { emitBusEvent } from "@/lib/arch/event-bus";
+import { getSolUsdSync } from "@/lib/market/sol-usd";
 
 import {
 
@@ -212,7 +213,7 @@ export async function planIntelligenceCommit(
   };
   const liqUsd = opts?.input?.liquidity_usd;
   if (liqUsd != null && liqUsd > 0 && !(Number(moduleScores._v_sol) > 0)) {
-    moduleScores._v_sol = liqUsd / 150;
+    moduleScores._v_sol = liqUsd / getSolUsdSync();
   }
 
   const executed = queueForAuto ? "pending" : buyAction ? "skipped" : "pending";

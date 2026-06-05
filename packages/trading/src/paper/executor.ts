@@ -3,7 +3,7 @@ import { appendEvent } from "@spr/core";
 import { getRuntimeDb } from "@spr/db";
 import { withTx, loadPortfolio, loadOpenPositions } from "../portfolio";
 import { applySlippage } from "../slippage";
-import { realizedPnlSol, unrealizedPnlSol, pctOfSize } from "../pnl";
+import { curveValueRatio, curveRealizedPnlSol, curveUnrealizedPnlSol } from "../pnl";
 import { checkRisk } from "../risk";
 import { assertTransition } from "../state-machine";
 import type { PaperRuntimeConfig } from "../config";
@@ -29,6 +29,12 @@ export type CloseIntent = {
   positionId: bigint;
   reason: string;
   correlationId?: string;
+  /**
+   * When set (>0), bypass the live price resolver and close at this exact price.
+   * Used to force-close stale positions whose mint no longer has a live feed
+   * (dead/rugged) so they cannot hold a concurrency slot forever.
+   */
+  exitPriceOverride?: number;
 };
 
 export type PartialCloseIntent = {
@@ -36,6 +42,8 @@ export type PartialCloseIntent = {
   fraction: number;     // 0 < fraction < 1
   reason: string;       // e.g. "tp1"
   correlationId?: string;
+  /** Bypass the live price resolver and fill at this price (see CloseIntent). */
+  exitPriceOverride?: number;
 };
 
 export type ResetIntent = {
@@ -252,11 +260,21 @@ export async function closePosition(
     return { ok: false, code: "BAD_STATE", reason: `cannot close from ${row.state}` };
   }
 
-  const quote = await quoteOrFail(resolvePrice, row.mint);
-  if ("error" in quote) return { ok: false, code: "NO_PRICE", reason: quote.error };
+  const override = intent.exitPriceOverride;
+  const useOverride = override != null && Number.isFinite(override) && override > 0;
+  let quote: PriceQuote;
+  if (useOverride) {
+    quote = { mint: row.mint, price: override, referenceVSol: override };
+  } else {
+    const q = await quoteOrFail(resolvePrice, row.mint);
+    if ("error" in q) return { ok: false, code: "NO_PRICE", reason: q.error };
+    quote = q;
+  }
 
-  const latencyMs = await maybeLatency(config);
-  const slip = config.enableSlippage
+  const latencyMs = useOverride ? 0 : await maybeLatency(config);
+  // Force-close (override) fills at the given price with no synthetic slippage —
+  // it represents a last-known mark, not a live execution.
+  const slip = !useOverride && config.enableSlippage
     ? applySlippage({
         side: "SELL",
         quotePrice: quote.price,
@@ -266,11 +284,17 @@ export async function closePosition(
       })
     : { fillPrice: quote.price, slippageBps: 0 };
 
-  const grossOut = row.quantity * slip.fillPrice;
+  // Bonding-curve value: a position's SOL value scales as (vSol_now / vSol_entry)²
+  // (token price ∝ vSol²), NOT linearly in vSol. entry_price / fillPrice are the
+  // curve vSol proxy and already carry entry/exit slippage, so squaring the ratio
+  // also applies slippage on the correct (price) basis. notional_sol is the SOL
+  // cost basis, which makes realized PnL exactly equal the net balance change.
+  const valueRatio = curveValueRatio(row.entry_price, slip.fillPrice);
+  const grossOut = row.notional_sol * valueRatio;
   const exitFee = applyFee(grossOut, config.feeBps, config.enableFees);
   const cashIn = grossOut - exitFee;
-  const pnl = realizedPnlSol(row.entry_price, slip.fillPrice, row.quantity, exitFee);
-  const pct = pctOfSize(row.entry_price, slip.fillPrice);
+  const pnl = cashIn - row.notional_sol;
+  const pct = row.notional_sol > 0 ? cashIn / row.notional_sol - 1 : 0;
 
   return withTx(async (client) => {
     // CLOSING is a transient marker so reconcile knows an in-flight close existed.
@@ -381,13 +405,21 @@ export async function partialClosePosition(
     return { ok: false, code: "ALREADY_PARTIAL", reason: "partial close already executed" };
   }
 
-  const quote = await quoteOrFail(resolvePrice, row.mint);
-  if ("error" in quote) return { ok: false, code: "NO_PRICE", reason: quote.error };
+  const pOverride = intent.exitPriceOverride;
+  const pUseOverride = pOverride != null && Number.isFinite(pOverride) && pOverride > 0;
+  let quote: PriceQuote;
+  if (pUseOverride) {
+    quote = { mint: row.mint, price: pOverride, referenceVSol: pOverride };
+  } else {
+    const q = await quoteOrFail(resolvePrice, row.mint);
+    if ("error" in q) return { ok: false, code: "NO_PRICE", reason: q.error };
+    quote = q;
+  }
 
-  const latencyMs = await maybeLatency(config);
+  const latencyMs = pUseOverride ? 0 : await maybeLatency(config);
   const partialQty = row.quantity * intent.fraction;
   const partialNotional = row.notional_sol * intent.fraction;
-  const slip = config.enableSlippage
+  const slip = !pUseOverride && config.enableSlippage
     ? applySlippage({
         side: "SELL",
         quotePrice: quote.price,
@@ -397,10 +429,13 @@ export async function partialClosePosition(
       })
     : { fillPrice: quote.price, slippageBps: 0 };
 
-  const grossOut = partialQty * slip.fillPrice;
+  // Curve value of the sold fraction (value ∝ vSol²; see closePosition).
+  // partialNotional is the SOL cost basis of the slice being sold.
+  const valueRatio = curveValueRatio(row.entry_price, slip.fillPrice);
+  const grossOut = partialNotional * valueRatio;
   const exitFee = applyFee(grossOut, config.feeBps, config.enableFees);
   const cashIn = grossOut - exitFee;
-  const pnl = realizedPnlSol(row.entry_price, slip.fillPrice, partialQty, exitFee);
+  const pnl = cashIn - partialNotional;
 
   return withTx(async (client) => {
     const upd = await client.query<{ id: string }>(
@@ -506,7 +541,7 @@ export async function markToMarket(resolvePrice: PriceResolver): Promise<{
     updates.push({
       id: p.id,
       current: q.price,
-      unrealized: unrealizedPnlSol(p.entryPrice, q.price, p.quantity),
+      unrealized: curveUnrealizedPnlSol(p.entryPrice, q.price, p.notionalSol),
     });
   }
 
@@ -557,7 +592,7 @@ export async function resetPortfolio(
   return withTx(async (client) => {
     for (const p of open) {
       const exitPrice = exitPrices.get(p.id) ?? p.entryPrice;
-      const pnl = realizedPnlSol(p.entryPrice, exitPrice, p.quantity, 0);
+      const pnl = curveRealizedPnlSol(p.entryPrice, exitPrice, p.notionalSol, 0);
       await client.query(
         `UPDATE paper_positions
          SET state = 'CLOSED',

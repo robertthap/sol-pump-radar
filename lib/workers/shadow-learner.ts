@@ -143,7 +143,8 @@ export async function startShadowLearner() {
       if (pos.entryVSol == null) continue;
       const current = await latestVSolFor(pos.mint);
       if (current == null) continue;
-      const grossPct = (current - pos.entryVSol) / pos.entryVSol;
+      // Bonding-curve: position value scales as (vSol_now / vSol_entry)², not linearly.
+      const grossPct = (current / pos.entryVSol) ** 2 - 1;
       const pctOfSize = grossPct - 0.02;
       const ageMs = Date.now() - pos.openedAt.getTime();
       const exit =

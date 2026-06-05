@@ -6,7 +6,7 @@ import { ShadowParityPanel } from "@/components/ShadowParityPanel";
 export default function AnalyticsPage() {
   return (
     <>
-      <div className="mx-auto max-w-[1600px] px-4">
+      <div className="app-page app-page-wide !pt-0">
         <section className="mb-3 grid grid-cols-1 gap-3 xl:grid-cols-3">
           <div className="xl:col-span-2">
             <LearningPanel />

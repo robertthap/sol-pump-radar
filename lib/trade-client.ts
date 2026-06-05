@@ -172,11 +172,20 @@ export type DemoResetResult = {
 };
 
 export async function submitDemoReset(): Promise<DemoResetResult> {
-  const r = await fetch("/api/settings/mode", {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ resetDemo: true }),
-  });
+  let r: Response;
+  try {
+    r = await fetch("/api/settings/mode", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resetDemo: true }),
+    });
+  } catch (e) {
+    const msg =
+      e instanceof TypeError
+        ? "Cannot reach the app server — start it with pnpm dev and ensure the worker is running."
+        : String(e);
+    return { ok: false, error: msg, correlationId: "" };
+  }
   if (r.status === 202) {
     const j = (await r.json()) as { correlationId?: string };
     if (!j.correlationId) {

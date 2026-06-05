@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { logger } from "@/lib/log";
-import { env, rpcHttpUrls, activeMintWindowMinutes, autoDemoRelaxEnabled, isLiveAllowed } from "@/lib/env";
+import { env, rpcHttpUrls, activeMintWindowMinutes, autoDemoRelaxEnabled, isLiveAllowed, allowsLaunchTier } from "@/lib/env";
 import { assertLiveExecutionAllowed } from "@/lib/runtime/live-guards";
 import { readState } from "@/lib/circuit-breaker/state";
 import { getDb } from "@/lib/db/client";
@@ -25,6 +25,7 @@ import {
 } from "@/lib/db/repos/auto-sessions";
 import { recordOutcome } from "@/lib/db/repos/outcomes";
 import { paperPnlSol } from "@/lib/executor/paper";
+import { pnlFromMcap } from "@/lib/paper/mcap-pnl";
 import { riskBudgetFor } from "@/lib/risk/presets";
 import { peekKeypair } from "@/lib/wallet/session";
 import { fetchMintFlags } from "@/lib/db/repos/bots";
@@ -38,6 +39,8 @@ import { relaxedTierEnabled } from "@/lib/trade/tier-control";
 import { coalesceFlowAgeSeconds, resolveTimingAgeSeconds } from "@/lib/trade/timing-age";
 import { fetchDemoAccount, getUiTradingMode } from "@/lib/db/repos/trading-mode";
 import { resolveEntryVSol } from "@/lib/pump/resolve-price";
+import { fetchPumpFunCoin } from "@/lib/pump/fun-api";
+import { mcapUsdFromVSol, effectiveVSolFromMcapUsd } from "@/lib/dex/curve-mcap";
 import { latestVSolBatch } from "@/lib/db/repos/events";
 import { VSOL_MODULE_KEY } from "@/lib/intelligence/scored-mint-adapter";
 import { paperOpen, paperClose, paperPartialClose } from "@/lib/paper/engine";
@@ -79,10 +82,10 @@ function balancePendingQueue(items: PendingBuyDecisionDto[]): PendingBuyDecision
   const cont: PendingBuyDecisionDto[] = [];
   for (const d of items) {
     const ms = d.moduleScores ?? {};
-    const isLaunch =
-      (ms._engine_a ?? 0) >= 1 ||
-      (ms.M1_GRADUATION ?? 0.5) < 0.35 ||
-      d.action === "BUY_MODERATE";
+    // Authoritative launch tag from the engine (Engine A = curve launch). The old
+    // `action === "BUY_MODERATE"` catch-all misclassified almost everything as
+    // launch, so the interleave never separated launches from continuation.
+    const isLaunch = (ms._engine_a ?? 0) >= 1 || (ms.M1_GRADUATION ?? 0.5) < 0.35;
     if (isLaunch) launch.push(d);
     else cont.push(d);
   }
@@ -274,6 +277,35 @@ async function todayLossSol(session: AutoSessionDto): Promise<number> {
   return Math.abs(((res as unknown as { rows: Array<{ loss: number }> }).rows[0]?.loss ?? 0));
 }
 
+/**
+ * Current vSol for an OPEN position, graduation-aware. On the bonding curve we use
+ * our on-chain resolver (events.v_sol_after). Once a coin graduates that value
+ * freezes (we stop seeing pump.fun curve trades), so we derive an effective vSol
+ * from the live DEX market cap (pump usdMarketCap) — keeping PnL + exit decisions
+ * tracking the real post-graduation price instead of stalling at ~breakeven.
+ */
+async function resolveCurrentForExit(
+  mint: string,
+): Promise<{ vSol: number | null; graduated: boolean; mcapUsd: number | null }> {
+  const events = await latestVSolFor(mint);
+  let coin: Awaited<ReturnType<typeof fetchPumpFunCoin>> = null;
+  try {
+    coin = await fetchPumpFunCoin(mint);
+  } catch {
+    /* offline / non-pump — fall back to on-chain events */
+  }
+  const mcapUsd =
+    coin?.usdMarketCap != null && Number.isFinite(coin.usdMarketCap) && coin.usdMarketCap > 0
+      ? coin.usdMarketCap
+      : null;
+  const graduated = (coin?.bondingPct ?? 0) >= 100 || coin?.complete === true;
+  if (graduated) {
+    const eff = effectiveVSolFromMcapUsd(mcapUsd);
+    if (eff != null) return { vSol: eff, graduated: true, mcapUsd };
+  }
+  return { vSol: events, graduated, mcapUsd };
+}
+
 async function handleExits(session: AutoSessionDto) {
   const tpPct = session.params.takeProfitPct;
   const slPct = session.params.stopLossPct;
@@ -292,21 +324,27 @@ async function handleExits(session: AutoSessionDto) {
   if (session.mode === "paper") {
     // Single-truth: paper_positions is the only paper ledger. TP1 partial
     // closes go through paperPartialClose; final closes through paperClose.
+    // The paper portfolio + concurrency cap are GLOBAL (single ledger, id=1), so
+    // exits must manage every OPEN position — not just the active session's.
+    // Otherwise positions orphaned by a stopped session hold the global cap
+    // forever and the next session can never open a trade. Stats are attributed
+    // to each position's owning session (`pos_session_id`).
     const res = await getDb().execute(sql`
       SELECT id::text AS id, mint, notional_sol::float8 AS size_sol,
-        entry_price::float8 AS entry_v_sol, opened_at,
+        entry_price::float8 AS entry_v_sol, current_price::float8 AS current_price, opened_at,
         modules_at_entry, entry_features,
+        entry_features->>'session_id' AS pos_session_id,
         tp1_at_ts, tp1_realized_sol::float8 AS tp1_realized_sol,
         COALESCE(tp1_fraction, 0)::float8 AS tp1_fraction
       FROM paper_positions
       WHERE state = 'OPEN'
-        AND entry_features->>'session_id' = ${session.id}
     `);
     type Raw = {
       id: string; mint: string; size_sol: number;
-      entry_v_sol: number | null; opened_at: Date | string;
+      entry_v_sol: number | null; current_price: number | null; opened_at: Date | string;
       modules_at_entry: Record<string, number> | null;
       entry_features: Record<string, unknown> | null;
+      pos_session_id: string | null;
       tp1_at_ts: Date | string | null;
       tp1_realized_sol: number;
       tp1_fraction: number;
@@ -314,18 +352,117 @@ async function handleExits(session: AutoSessionDto) {
     const rows = (res as unknown as { rows: Raw[] }).rows;
     for (const pos of rows) {
       if (pos.entry_v_sol == null) continue;
-      const current = await latestVSolFor(pos.mint);
-      if (current == null) continue;
-      const { pnlSol, pctOfSize } = paperPnlSol({
-        sizeSol: pos.size_sol,
-        entryVSol: pos.entry_v_sol,
-        currentVSol: current,
-        pumpFeesPct: budget.pumpFeesPct,
-        paperSlippagePct: budget.paperSlippagePct,
-      });
+      // Attribute closed-trade stats to the position's OWNING session (it may
+      // have been opened by a now-stopped session but still occupies the ledger).
+      const statSession = pos.pos_session_id ?? session.id;
+      const { vSol: current, graduated, mcapUsd: currentMcapUsd } = await resolveCurrentForExit(pos.mint);
+      if (current == null) {
+        // Dead/illiquid mint: no live price feed. Don't let it hold a
+        // concurrency slot forever — once past max hold, force-close at the
+        // last known mark (or entry as a conservative fallback) so capital and
+        // the slot are freed for fresh launches. (Was: `continue` → stuck OPEN.)
+        const openedAtMs =
+          pos.opened_at instanceof Date ? pos.opened_at.getTime() : new Date(pos.opened_at).getTime();
+        const staleAgeMs = Date.now() - openedAtMs;
+        if (staleAgeMs < maxHoldMs) continue;
+        const fallbackPrice =
+          pos.current_price != null && pos.current_price > 0 ? pos.current_price : pos.entry_v_sol;
+        const id = BigInt(pos.id);
+        const closed = await paperClose({
+          positionId: id,
+          reason: "timeout_stale",
+          correlationId: `close-stale-${pos.id}`,
+          exitPriceOverride: fallbackPrice,
+        });
+        if (!closed.ok) {
+          log.warn("paper stale force-close rejected", { id: pos.id, code: closed.code, reason: closed.reason });
+          continue;
+        }
+        const finalPnl = (pos.tp1_realized_sol ?? 0) + closed.data.realizedPnlSol;
+        await recordOutcome({
+          source: "paper",
+          tradeId: id,
+          entryVSol: pos.entry_v_sol,
+          exitVSol: closed.data.exitPrice,
+          pnlSol: finalPnl,
+          pctOfSize: closed.data.pctOfSize,
+          exitReason: "timeout_stale",
+          holdSeconds: staleAgeMs / 1000,
+          action: ((pos.entry_features as Record<string, unknown> | null)?.action as string) ?? null,
+          modulesAtEntry: pos.modules_at_entry,
+        });
+        const win = finalPnl > 0;
+        await accumulateStat(statSession, win ? "wins" : "losses", 1);
+        await accumulateStat(statSession, "tradesClosed", 1);
+        await accumulateStat(statSession, "realizedPnlSol", finalPnl);
+        log.info("auto closed paper (stale/no price)", {
+          id: pos.id, mint: pos.mint, reason: "timeout_stale",
+          ageHrs: (staleAgeMs / 3_600_000).toFixed(1),
+          exitPrice: fallbackPrice, pnl: finalPnl.toFixed(4),
+        });
+        continue;
+      }
       const openedAt =
         pos.opened_at instanceof Date ? pos.opened_at.getTime() : new Date(pos.opened_at).getTime();
       const ageMs = Date.now() - openedAt;
+
+      // Prefer REAL market-cap PnL (pump/DEX) when we have a real entry mcap and a
+      // live current mcap — accurate on AND off the bonding curve. Otherwise fall
+      // back to the bonding-curve vSol model. `realizedExitPrice` is the vSol fed
+      // to the curve close (value ∝ vSol²) so the booked PnL matches the chosen model.
+      const efPnl = (pos.entry_features ?? {}) as Record<string, unknown>;
+      let entryMcapStamp =
+        typeof efPnl.entry_mcap_usd === "number" && efPnl.entry_mcap_usd > 0
+          ? (efPnl.entry_mcap_usd as number)
+          : null;
+      let entryMcapIsReal = efPnl.entry_mcap_real === true;
+      // Backfill: the open-path pump fetch is best-effort (short timeout under load).
+      // The first exit tick after a young open reliably has a cached real mcap — use
+      // it as the real entry mcap so every position gets an accurate entry value.
+      if (!entryMcapIsReal && currentMcapUsd != null && currentMcapUsd > 0 && ageMs < 45_000) {
+        entryMcapStamp = currentMcapUsd;
+        entryMcapIsReal = true;
+        await getDb()
+          .execute(sql`
+            UPDATE paper_positions
+            SET entry_features = COALESCE(entry_features, '{}'::jsonb)
+              || jsonb_build_object('entry_mcap_usd', ${currentMcapUsd}::float8,
+                                    'entry_mcap_real', true)
+            WHERE id = ${BigInt(pos.id)}
+          `)
+          .catch(() => undefined);
+      }
+      const useRealMcap =
+        entryMcapIsReal && entryMcapStamp != null && currentMcapUsd != null && currentMcapUsd > 0;
+      let pnlSol: number;
+      let pctOfSize: number;
+      let realizedExitPrice: number | undefined;
+      if (useRealMcap) {
+        const r = pnlFromMcap({
+          sizeSol: pos.size_sol,
+          entryMcapUsd: entryMcapStamp!,
+          currentMcapUsd: currentMcapUsd!,
+          pumpFeesPct: budget.pumpFeesPct,
+          paperSlippagePct: budget.paperSlippagePct,
+        });
+        pnlSol = r.pnlSol;
+        pctOfSize = r.pctOfSize;
+        // The close books on the bonding curve (value ∝ vSol²), so feed a vSol that
+        // reproduces this mcap ratio when squared: (override/entry)² = mcapRatio ⇒
+        // override = entry · √mcapRatio.
+        realizedExitPrice = pos.entry_v_sol * Math.sqrt(currentMcapUsd! / entryMcapStamp!);
+      } else {
+        const r = paperPnlSol({
+          sizeSol: pos.size_sol,
+          entryVSol: pos.entry_v_sol,
+          currentVSol: current,
+          pumpFeesPct: budget.pumpFeesPct,
+          paperSlippagePct: budget.paperSlippagePct,
+        });
+        pnlSol = r.pnlSol;
+        pctOfSize = r.pctOfSize;
+        realizedExitPrice = graduated && current != null ? current : undefined;
+      }
 
       // Profit-curve capture: track peak unrealized PnL (and when) in
       // entry_features. Feeds the trailing stop and the learner's exit-timing.
@@ -356,6 +493,7 @@ async function handleExits(session: AutoSessionDto) {
           fraction: tp1Fraction,
           reason: "tp1",
           correlationId: `tp1-${id}`,
+          exitPriceOverride: realizedExitPrice,
         });
         if (partial.ok) {
           const realized = partial.data.realizedPnlSol;
@@ -393,6 +531,9 @@ async function handleExits(session: AutoSessionDto) {
         positionId: id,
         reason,
         correlationId: `close-${id}`,
+        // Book at the price matching our PnL model: real-mcap-derived when we have
+        // real mcaps (accurate on/off curve), else the graduated DEX-derived vSol.
+        exitPriceOverride: realizedExitPrice,
       });
       if (!closed.ok) {
         log.warn("paper close rejected", { id: pos.id, code: closed.code, reason: closed.reason });
@@ -432,9 +573,9 @@ async function handleExits(session: AutoSessionDto) {
         .catch(() => undefined);
 
       const win = finalPnl > 0;
-      await accumulateStat(session.id, win ? "wins" : "losses", 1);
-      await accumulateStat(session.id, "tradesClosed", 1);
-      await accumulateStat(session.id, "realizedPnlSol", finalPnl);
+      await accumulateStat(statSession, win ? "wins" : "losses", 1);
+      await accumulateStat(statSession, "tradesClosed", 1);
+      await accumulateStat(statSession, "realizedPnlSol", finalPnl);
       log.info("auto closed paper", {
         id: pos.id, mint: pos.mint, reason, pnl: finalPnl.toFixed(4),
         tp1: tp1HitAt ? "yes" : "no", tp1Fraction: tp1FractionExisting,
@@ -466,7 +607,8 @@ async function handleExits(session: AutoSessionDto) {
     const current = await latestVSolFor(pos.mint);
     if (current == null) continue;
     const fees = pos.sizeSol * 0.01 * 2;
-    const grossPct = (current - entryV) / entryV;
+    // Bonding-curve: position value scales as (vSol_now / vSol_entry)², not linearly.
+    const grossPct = (current / entryV) ** 2 - 1;
     const pctOfSize = grossPct - 0.02; // rough fees
     const pnlSol = pctOfSize * pos.sizeSol;
     const openedAt = pos.openedAt instanceof Date ? pos.openedAt.getTime() : Date.now();
@@ -833,6 +975,26 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       timing: { confidence: qual.gateTimingConf ?? 0 },
     };
     const penalty = imitationPenaltyPct(sizeSol, v);
+    // Real-mcap entry ceiling (launch/hybrid only): the gate scores bonding-curve
+    // data, so a coin that has already graduated to a large DEX cap can slip through
+    // as a "fresh launch". When MAX_ENTRY_MCAP_USD is set, skip those. Cached fetch,
+    // reused by the entry-mcap stamp below.
+    const maxEntryMcap = env().MAX_ENTRY_MCAP_USD;
+    if (maxEntryMcap > 0 && allowsLaunchTier()) {
+      try {
+        const coin = await fetchPumpFunCoin(d.mint);
+        const rm = coin?.usdMarketCap ?? null;
+        if (rm != null && rm > maxEntryMcap) {
+          bumpTransient(
+            d.mint,
+            `mcap $${Math.round(rm / 1000)}k > ceiling $${Math.round(maxEntryMcap / 1000)}k`,
+          );
+          continue;
+        }
+      } catch {
+        /* no pump data — allow (curve fallback) */
+      }
+    }
     if (session.mode === "paper") {
       if (tagDemo) {
         if (demoBalanceCache == null) {
@@ -928,6 +1090,33 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
           WHERE id = ${positionId}
         `)
         .catch(() => undefined);
+      // Stamp the entry market cap. Prefer pump.fun's REAL usd_market_cap — accurate
+      // for the mature/graduated coins we actually trade and the only correct value
+      // post-graduation. Fall back to the bonding-curve estimate only for ultra-fresh
+      // launches the API hasn't indexed yet (mcap null at t≈0). `v` = entry vSol.
+      let entryMcapUsd: number | null = null;
+      let entryMcapReal = false;
+      try {
+        const coin = await fetchPumpFunCoin(d.mint);
+        if (coin?.usdMarketCap != null && Number.isFinite(coin.usdMarketCap) && coin.usdMarketCap > 0) {
+          entryMcapUsd = coin.usdMarketCap;
+          entryMcapReal = true;
+        }
+      } catch {
+        /* fall back to the bonding-curve estimate */
+      }
+      if (entryMcapUsd == null) entryMcapUsd = mcapUsdFromVSol(v);
+      if (entryMcapUsd != null && Number.isFinite(entryMcapUsd) && entryMcapUsd > 0) {
+        await getDb()
+          .execute(sql`
+            UPDATE paper_positions
+            SET entry_features = COALESCE(entry_features, '{}'::jsonb)
+              || jsonb_build_object('entry_mcap_usd', ${entryMcapUsd}::float8,
+                                    'entry_mcap_real', ${entryMcapReal}::boolean)
+            WHERE id = ${positionId}
+          `)
+          .catch(() => undefined);
+      }
       await accumulateStat(session.id, "tradesOpened", 1);
       opened++;
       heldMints.add(d.mint);

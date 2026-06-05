@@ -62,7 +62,7 @@ export function WalletSetupModal({ onClose }: { onClose: () => void }) {
       return;
     }
     if (!secret.trim()) {
-      setError("Paste your secret key (base58 string or JSON array of 64 bytes).");
+      setError("Paste your private key (export from Phantom or Solflare).");
       return;
     }
     // Light client-side validation.
@@ -191,7 +191,7 @@ export function WalletSetupModal({ onClose }: { onClose: () => void }) {
         {mode === "import" && (
           <div className="space-y-3">
             <p className="text-xs text-muted">
-              Paste your secret key (64-byte). Accepts base58 (Phantom / Solflare export) or a JSON
+              Paste your private key from Phantom or Solflare (base58 text or JSON byte list). Accepts
               byte array (Solana CLI keypair file).
             </p>
             <PassInputs

@@ -13,6 +13,15 @@ export type DexTradeMarker = {
   vSol?: number | null;
 };
 
+/** Live trade HUD rendered as an overlay on top of the DexScreener chart. */
+export type DexTradeHud = {
+  status: "open" | "closed";
+  entryMcapUsd?: number | null;
+  /** Fractional PnL of position size, e.g. 0.05 = +5%. */
+  pnlPct?: number | null;
+  pnlSol?: number | null;
+};
+
 function fmtMcap(v: number | null | undefined) {
   if (v == null || !Number.isFinite(v)) return null;
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
@@ -20,13 +29,21 @@ function fmtMcap(v: number | null | undefined) {
   return `$${Math.round(v)}`;
 }
 
+function fmtPct(v: number | null | undefined) {
+  if (v == null || !Number.isFinite(v)) return null;
+  const p = v * 100;
+  return `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
+}
+
 type Props = {
   mint: string;
   compact?: boolean;
   className?: string;
-  /** Shown as chips above embed — disable when parent shows TradeEntryStrip + TokenChart. */
+  /** Buy/sell marker chips shown above the embed. */
   tradeMarkers?: DexTradeMarker[];
   showTradeBadges?: boolean;
+  /** Live entry + PnL overlay drawn on top of the chart (re-renders as parent polls). */
+  hud?: DexTradeHud;
 };
 
 export function ExternalDexEmbed({
@@ -35,6 +52,7 @@ export function ExternalDexEmbed({
   className,
   tradeMarkers,
   showTradeBadges = true,
+  hud,
 }: Props) {
   const [config, setConfig] = useState<DexEmbedConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -184,9 +202,40 @@ export function ExternalDexEmbed({
             sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
           />
         )}
+
+        {/* Live trade HUD — our own overlay on top of the 3rd-party chart (we can't
+            draw inside the iframe, so the entry + live PnL ride here as a HUD). */}
+        {!loading && config?.embedUrl && hud && (
+          <div className="pointer-events-none absolute left-2 top-2 z-10 flex flex-col gap-1">
+            <div
+              className={`flex items-center gap-2 rounded-md border px-2 py-1 text-[11px] font-medium shadow-sm backdrop-blur ${
+                hud.status === "open"
+                  ? "border-ok/50 bg-bg/85 text-ok"
+                  : "border-border/60 bg-bg/85 text-muted"
+              }`}
+            >
+              <span className="inline-block h-2 w-2 rounded-full bg-ok" aria-hidden />
+              <span className="uppercase tracking-wide">
+                {hud.status === "open" ? "Your entry" : "Closed"}
+              </span>
+              {fmtMcap(hud.entryMcapUsd) && (
+                <span className="text-fg">@ {fmtMcap(hud.entryMcapUsd)}</span>
+              )}
+              {fmtPct(hud.pnlPct) && (
+                <span
+                  className={`font-mono ${
+                    (hud.pnlPct ?? 0) >= 0 ? "text-ok" : "text-bad"
+                  }`}
+                >
+                  {fmtPct(hud.pnlPct)}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <p className="text-[10px] text-muted">
-        Live chart, trades, and stats from DexScreener. Use Quick Trade below for SolPump Radar buys.
+        Live DexScreener chart · your entries are marked above and on the chart overlay.
       </p>
     </div>
   );

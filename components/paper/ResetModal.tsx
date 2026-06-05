@@ -21,7 +21,7 @@ export function ResetModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded border border-border bg-panel p-4 shadow-lg">
-        <h2 className="text-lg font-semibold">Reset paper portfolio</h2>
+        <h2 className="text-lg font-semibold">Reset demo portfolio</h2>
         <p className="mt-2 text-sm text-muted">
           This will close all open positions at the latest available price, archive the
           current session, and start a new session with a fresh balance.{" "}

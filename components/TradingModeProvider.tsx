@@ -8,9 +8,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useVisibleInterval } from "@/lib/ui/useVisibleInterval";
-import { getJson } from "@/lib/ui/client-get";
+import { getJson, invalidateClientGet } from "@/lib/ui/client-get";
 import { pollCommandStatus } from "@/lib/trade-client";
 
 export type UiTradingMode = "demo" | "real";
@@ -29,6 +29,8 @@ type DemoAccount = {
 type ModeLitePayload = {
   mode: UiTradingMode | null;
   needsSelection: boolean;
+  /** A genuine live session (open positions / running auto-trader), not just a saved mode. */
+  activeSession?: boolean;
   demo: DemoAccount;
   real: { walletUnlocked: boolean; liveExecution: "on" | "off" };
   shadowLearner: { enabled: boolean };
@@ -37,12 +39,16 @@ type ModeLitePayload = {
 type ModeState = {
   mode: UiTradingMode | null;
   needsSelection: boolean;
+  /** A genuine live session (open positions / running auto-trader), not just a saved mode. */
+  activeSession: boolean;
   demo: DemoAccount | null;
   shadowEnabled: boolean;
   walletUnlocked: boolean;
   liveExecution: "on" | "off";
   loading: boolean;
   setMode: (m: UiTradingMode) => Promise<void>;
+  /** End the current Demo or Real session and return to the home wallet chooser. */
+  exitSession: () => Promise<void>;
   refresh: () => Promise<void>;
   /** Trade bootstrap can push mode once and skip duplicate polls. */
   hydrate: (payload: ModeLitePayload) => void;
@@ -61,14 +67,19 @@ function readStoredMode(): UiTradingMode | null {
 
 function needsFullDemo(pathname: string | null): boolean {
   if (!pathname) return false;
-  return pathname.startsWith("/holdings") || pathname.startsWith("/token/");
+  return pathname.startsWith("/wallet") || pathname.startsWith("/token/");
 }
 
 export function TradingModeProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const storedOnMount = readStoredMode();
-  const [mode, setModeState] = useState<UiTradingMode | null>(storedOnMount);
-  const [needsSelection, setNeedsSelection] = useState(storedOnMount == null);
+  const router = useRouter();
+  // Initialize to the SERVER's values (null / needs-selection) so the first client
+  // render matches SSR. Reading localStorage in useState would diverge from the
+  // server and cause a hydration mismatch; the mount effect below hydrates the
+  // real mode from localStorage right after.
+  const [mode, setModeState] = useState<UiTradingMode | null>(null);
+  const [needsSelection, setNeedsSelection] = useState(true);
+  const [activeSession, setActiveSession] = useState(false);
   const [demo, setDemo] = useState<DemoAccount | null>(null);
   const [shadowEnabled, setShadowEnabled] = useState(true);
   const [walletUnlocked, setWalletUnlocked] = useState(false);
@@ -106,6 +117,7 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
       setModeState(null);
       setNeedsSelection(j.needsSelection);
     }
+    setActiveSession(j.activeSession ?? false);
     setDemo(j.demo);
     setShadowEnabled(j.shadowLearner?.enabled ?? true);
     setWalletUnlocked(j.real?.walletUnlocked ?? false);
@@ -147,6 +159,33 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
       : 90_000;
   useVisibleInterval(refresh, pollMs, [refresh, pollMs]);
 
+  const exitSession = useCallback(async () => {
+    localStorage.removeItem(LS_KEY);
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem(MODE_SYNC_KEY);
+    }
+    setModeState(null);
+    setNeedsSelection(true);
+    setActiveSession(false);
+    invalidateClientGet();
+    setDemo(null);
+    setWalletUnlocked(false);
+    try {
+      const r = await fetch("/api/settings/mode", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clearSession: true }),
+      });
+      if (r.status === 202) {
+        const j = (await r.json()) as { correlationId?: string };
+        if (j.correlationId) await pollCommandStatus(j.correlationId);
+      }
+    } catch {
+      /* local session cleared; server may catch up on next worker tick */
+    }
+    router.push("/");
+  }, [router]);
+
   const setMode = useCallback(
     async (m: UiTradingMode) => {
       const r = await fetch("/api/settings/mode", {
@@ -165,6 +204,9 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(LS_KEY, m);
       setModeState(m);
       setNeedsSelection(false);
+      // Bust all cached GETs so positions/analytics/holdings refetch for the NEW
+      // mode immediately — no prior-mode data leaking across the switch.
+      invalidateClientGet();
       await refresh();
     },
     [refresh],
@@ -174,24 +216,28 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
     () => ({
       mode,
       needsSelection,
+      activeSession,
       demo,
       shadowEnabled,
       walletUnlocked,
       liveExecution,
       loading,
       setMode,
+      exitSession,
       refresh,
       hydrate,
     }),
     [
       mode,
       needsSelection,
+      activeSession,
       demo,
       shadowEnabled,
       walletUnlocked,
       liveExecution,
       loading,
       setMode,
+      exitSession,
       refresh,
       hydrate,
     ],

@@ -6,6 +6,8 @@ import { fetchBuyerProfilesForMint } from "@/lib/db/repos/bots";
 import { readActiveGateWeights } from "@/lib/db/repos/tuner";
 import { imitationPenaltyPct } from "@/lib/intel/imitation";
 import { isProfitSignalMode, allowsLaunchTier } from "@/lib/env";
+import { launchQualityScore } from "@/lib/intelligence/launch-rank";
+import { relaxedTierEnabled } from "@/lib/trade/tier-control";
 
 export const CONFLUENCE_MIN: Record<string, number> = {
   BUY_STRONG: 0.56,
@@ -52,8 +54,35 @@ export function passesConfluence(ctx: EntryContext, demoRelaxed = false): EntryF
   const min = CONFLUENCE_MIN[ctx.action];
   if (min == null) return { allow: true, reason: "not a buy", gateConfidence: null, insiderBoost: false };
   const boost = ctx.insider?.hasStrongInsiderEntry ? 0.03 : ctx.insider?.hasInsiderEntry ? 0.02 : 0;
+
+  // A6 launch-tier de-bias: a fresh launch's confluence is low by definition (it's
+  // ≈ graduation progress), so a maturity-keyed floor gates out fast newborns. For a
+  // launch-tier mint (engine_a / very young in a launch-permitting mode) with organic
+  // flow, scale a bounded floor reduction by maturity-independent launch quality, so
+  // velocity — not graduation — decides. Module/rug/bundle vetoes still apply downstream.
+  const launchTier =
+    allowsLaunchTier() &&
+    ((ctx.moduleScores?._engine_a ?? 0) >= 1 || (ctx.ageSeconds ?? 99_999) < 180);
+  const organicFlow =
+    (ctx.flow?.buys5m ?? 0) > (ctx.flow?.sells5m ?? 0) && (ctx.flow?.uniqueBuyers5m ?? 0) >= 3;
+  // Only relax the launch floor while fresh launches are proving profitable (the
+  // learner keeps the relaxed tier on). If it has been disabled for poor expectancy,
+  // launches face the full floor — focus shifts to proven signals.
+  const launchBoost =
+    launchTier && organicFlow && relaxedTierEnabled()
+      ? 0.1 *
+        launchQualityScore({
+          velocity: ctx.flow?.curveVelocity5m ?? null,
+          uniqueBuyers5m: ctx.flow?.uniqueBuyers5m,
+          buys5m: ctx.flow?.buys5m,
+          sells5m: ctx.flow?.sells5m,
+        })
+      : 0;
+
   const relaxedMin = demoRelaxed ? Math.max(0.36, min - 0.12) : min;
-  const effectiveMin = Math.max(demoRelaxed ? 0.36 : 0.42, relaxedMin - boost);
+  // A high-velocity launch may relax further, but never below a hard quality floor.
+  const hardFloor = launchBoost > 0 ? 0.3 : demoRelaxed ? 0.36 : 0.42;
+  const effectiveMin = Math.max(hardFloor, relaxedMin - boost - launchBoost);
   const scorePct = Math.round(ctx.confluenceScore * 100);
   const minPct = Math.round(effectiveMin * 100);
   if (scorePct < minPct) {
@@ -66,7 +95,12 @@ export function passesConfluence(ctx: EntryContext, demoRelaxed = false): EntryF
   }
   return {
     allow: true,
-    reason: boost > 0 ? `confluence OK (insider boost −${boost.toFixed(2)})` : "confluence OK",
+    reason:
+      launchBoost > 0.005
+        ? `confluence OK (launch boost −${launchBoost.toFixed(2)})`
+        : boost > 0
+          ? `confluence OK (insider boost −${boost.toFixed(2)})`
+          : "confluence OK",
     gateConfidence: null,
     insiderBoost: boost > 0,
   };

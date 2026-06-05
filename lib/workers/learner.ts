@@ -1,6 +1,6 @@
 import "server-only";
 import { logger } from "@/lib/log";
-import { env } from "@/lib/env";
+import { env, allowsLaunchTier } from "@/lib/env";
 import {
   attributeOutcomes,
   fetchActionPerformance,
@@ -132,6 +132,10 @@ function proposeTunes(
     let next: number | null = null;
     let reason = "";
     if (winRate < 0.3) {
+      // In launch/hybrid mode, fresh-launch decisions have inherently low grad early;
+      // raising the grad bar here starves the newborn tier (the whole point of launch mode).
+      // Only allow tightening the BUY_STRONG bar, never BUY_MODERATE, while launch tier is on.
+      if (allowsLaunchTier() && action === "BUY_MODERATE") continue;
       next = clamp(current + 0.03, defaults[defaultKey] - MAX_DEVIATION_FROM_PRESET, defaults[defaultKey] + MAX_DEVIATION_FROM_PRESET);
       reason = `${action} win rate ${(winRate * 100).toFixed(0)}% on ${p.n} trades — raise threshold ${current.toFixed(2)}→${next.toFixed(2)}`;
     } else if (winRate > 0.65) {

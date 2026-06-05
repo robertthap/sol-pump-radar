@@ -32,7 +32,10 @@ export async function POST(req: NextRequest) {
   }
   if ((await getUiTradingMode()) === "demo") {
     return NextResponse.json(
-      { error: "not_in_real_mode", hint: "Switch to Real mode or use POST /api/trade/demo" },
+      {
+        error: "not_in_real_mode",
+        hint: "Log off and pick Real wallet on the home page, or use POST /api/trade/demo",
+      },
       { status: 409 },
     );
   }

@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -21,42 +22,55 @@ import { MissionTerminal } from "@/components/mission/MissionTerminal";
 
 const RAIL = [
   { href: "/mission", label: "Mission control", icon: Radar },
-  { href: "/signals", label: "Signals log", icon: Zap },
-  { href: "/trade", label: "Auto trade", icon: Activity },
-  { href: "/market", label: "Market trenches", icon: LayoutDashboard },
-  { href: "/backtest", label: "Replay", icon: FlaskConical },
+  { href: "/signals", label: "Signals", icon: Zap },
+  { href: "/trade", label: "Trade", icon: Activity },
+  { href: "/market", label: "Market", icon: LayoutDashboard },
+  { href: "/backtest", label: "Backtest", icon: FlaskConical },
 ] as const;
+
+function StatChip({ label, value, tone }: { label: string; value: ReactNode; tone?: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-2.5 py-1.5 text-center">
+      <dt className="text-[9px] uppercase tracking-wide text-zinc-500">{label}</dt>
+      <dd className={`font-mono text-sm font-semibold ${tone ?? "text-zinc-200"}`}>{value}</dd>
+    </div>
+  );
+}
 
 function MissionTopBar() {
   const { data } = useMissionControl();
   const intel = data?.intelligence;
+  const workersOn = data?.workers === "on";
   return (
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950/90 px-4 py-3">
-      <div>
-        <h1 className="text-sm font-bold tracking-wide text-zinc-100">PUMP RADAR · MISSION CONTROL</h1>
-        <p className="text-[10px] text-zinc-500">
-          What is moving · Why · How early · Should we trade · Why we skipped
-        </p>
+    <header className="relative z-10 flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-zinc-950/70 px-4 py-3 backdrop-blur-md">
+      <div className="flex items-center gap-3">
+        <Link href="/" className="flex items-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500 shadow-lg shadow-brand-500/20">
+            <span className="text-base font-bold text-black">P</span>
+          </span>
+          <span className="text-lg font-bold tracking-tight text-zinc-100">
+            Pump<span className="text-accent">Radar</span>
+          </span>
+        </Link>
+        <span className="hidden items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1 text-[10px] font-medium text-zinc-400 sm:flex">
+          <Radar className="h-3 w-3 text-cyan-400" />
+          Mission Control
+        </span>
       </div>
-      <dl className="flex flex-wrap gap-4 text-[10px] font-mono">
-        <div>
-          <dt className="text-zinc-600">Universe</dt>
-          <dd className="text-cyan-400">{data?.stats.total ?? 0}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-600">Commits/h</dt>
-          <dd className="text-zinc-200">{intel?.commits_last_hour ?? 0}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-600">Auto-eligible/h</dt>
-          <dd className="text-emerald-400">{intel?.auto_eligible_last_hour ?? 0}</dd>
-        </div>
-        <div>
-          <dt className="text-zinc-600">Workers</dt>
-          <dd className={data?.workers === "on" ? "text-emerald-400" : "text-amber-400"}>
-            {data?.workers ?? "?"}
-          </dd>
-        </div>
+      <dl className="flex flex-wrap items-stretch gap-2">
+        <StatChip label="Universe" value={data?.stats.total ?? 0} tone="text-cyan-400" />
+        <StatChip label="Commits/h" value={intel?.commits_last_hour ?? 0} />
+        <StatChip label="Auto-eligible/h" value={intel?.auto_eligible_last_hour ?? 0} tone="text-emerald-400" />
+        <StatChip
+          label="Workers"
+          tone={workersOn ? "text-emerald-400" : "text-amber-400"}
+          value={
+            <span className="flex items-center justify-center gap-1">
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${workersOn ? "animate-pulse bg-emerald-400" : "bg-amber-400"}`} />
+              {data?.workers ?? "?"}
+            </span>
+          }
+        />
       </dl>
     </header>
   );
@@ -64,9 +78,16 @@ function MissionTopBar() {
 
 function MissionBody() {
   return (
-    <div className="mission-shell flex min-h-[calc(100vh-3.5rem)] flex-col">
+    <div className="mission-shell relative flex min-h-[calc(100vh-3.5rem)] flex-col overflow-hidden">
+      {/* ambient glow — echoes the home page */}
+      <div
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          background: "radial-gradient(70% 40% at 50% 0%, rgb(22 199 132 / 0.08), transparent 70%)",
+        }}
+      />
       <MissionTopBar />
-      <div className="flex flex-1 flex-col lg:flex-row">
+      <div className="relative z-10 flex flex-1 flex-col lg:flex-row">
         <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-zinc-800 bg-zinc-950 px-2 py-2 lg:w-44 lg:flex-col lg:border-b-0 lg:border-r">
           {RAIL.map((item) => {
             const Icon = item.icon;

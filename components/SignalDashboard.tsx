@@ -313,7 +313,9 @@ export function SignalDashboard({
           </div>
         </div>
 
-        <div className={compact ? "max-h-[520px] overflow-auto" : "max-h-[640px] overflow-auto"}>
+        <div
+          className={`table-scroll table-scroll-wide ${compact ? "max-h-[520px]" : "max-h-[640px]"} overflow-y-auto`}
+        >
           <table className="table-feed w-full text-xs">
             <thead className="sticky top-0 bg-panel">
               <tr>

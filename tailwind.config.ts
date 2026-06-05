@@ -5,23 +5,27 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // GMGN-style green accent (up/buy). brand.* repointed from orange → green
+        // so existing bg-brand-500 / btn-brand surfaces become the green accent.
         brand: {
-          50: "#fff7ed",
-          100: "#ffedd5",
-          500: "#ff6a00",
-          600: "#ea580c",
-          700: "#c2410c",
+          50: "rgb(22 199 132 / 0.10)",
+          100: "rgb(22 199 132 / 0.18)",
+          500: "rgb(22 199 132)",
+          600: "rgb(13 168 110)",
+          700: "rgb(9 132 86)",
         },
-        bg: "rgb(249 250 251)",
-        panel: "rgb(255 255 255)",
-        border: "rgb(229 231 235)",
-        muted: "rgb(107 114 128)",
-        fg: "rgb(17 24 39)",
-        text: "rgb(17 24 39)",
-        accent: "rgb(255 106 0)",
-        ok: "rgb(22 163 74)",
-        warn: "rgb(217 119 6)",
-        bad: "rgb(220 38 38)",
+        // Dark trading-terminal surfaces (space-separated rgb so /alpha modifiers work).
+        bg: "rgb(11 13 16)",
+        panel: "rgb(20 22 28)",
+        panel2: "rgb(28 30 38)",
+        border: "rgb(38 41 50)",
+        muted: "rgb(143 148 160)",
+        fg: "rgb(233 236 242)",
+        text: "rgb(233 236 242)",
+        accent: "rgb(22 199 132)",
+        ok: "rgb(34 197 94)",
+        warn: "rgb(234 179 8)",
+        bad: "rgb(244 84 84)",
       },
       keyframes: {
         shimmer: {

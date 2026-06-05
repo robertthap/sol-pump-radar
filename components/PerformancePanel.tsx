@@ -92,14 +92,14 @@ export function PerformancePanel() {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
         <h2 className="text-xs font-medium uppercase tracking-wide text-muted">
           Performance{" "}
-          <span className="ml-1 text-[10px] font-normal text-muted">paper · learning</span>
+          <span className="ml-1 text-[10px] font-normal text-muted">demo · learning</span>
         </h2>
         <span className="text-[10px] text-muted">refresh 5s</span>
       </div>
 
       {noTrades ? (
         <div className="px-3 py-6 text-center text-muted text-xs">
-          {err ? `waiting… (${err})` : "no closed paper trades yet"}
+          {err ? `waiting… (${err})` : "no closed demo trades yet"}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2 xl:grid-cols-4">

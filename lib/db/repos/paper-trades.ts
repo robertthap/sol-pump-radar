@@ -231,7 +231,7 @@ export async function fetchPendingBuyDecisions(
     SELECT id, mint, action, ts, confluence_score::float8 AS confluence_score, module_scores
     FROM decision_log
     WHERE ${where}
-    ORDER BY ts ASC
+    ORDER BY COALESCE((module_scores->>'_engine_a')::int, 0) DESC, confluence_score DESC, ts DESC
     LIMIT 50
   `),
   );
@@ -280,7 +280,7 @@ export async function fetchTradableAutoFallback(
     WHERE d.action IN ('BUY_STRONG', 'BUY_MODERATE')
       AND ${gate}
       AND d.ts > now() - interval '5 minutes'
-    ORDER BY d.confluence_score DESC, d.ts DESC
+    ORDER BY COALESCE((d.module_scores->>'_engine_a')::int, 0) DESC, d.confluence_score DESC, d.ts DESC
     LIMIT ${lim}
   `),
   );

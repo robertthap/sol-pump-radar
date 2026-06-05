@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { autoDemoRelaxEnabled, env, isProfitSignalMode } from "@/lib/env";
+import { autoDemoRelaxEnabled, env, getEffectiveSignalMode, isProfitSignalMode } from "@/lib/env";
 import { readState } from "@/lib/circuit-breaker/state";
 import {
   getActiveSession,
@@ -122,7 +122,7 @@ export async function buildAutoDiagnostics(): Promise<AutoDiagnostics> {
     buyDecisions1h: counts?.buy_1h ?? 0,
     skippedLast1h,
     circuitBreakerState: cb.state,
-    signalMode: e.SIGNAL_MODE,
+    signalMode: getEffectiveSignalMode(),
     riskPreset: e.RISK_PRESET,
     lastTickAt,
     tradesOpened: session?.stats?.tradesOpened ?? 0,

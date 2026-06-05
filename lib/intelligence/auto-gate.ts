@@ -1,5 +1,5 @@
 import "server-only";
-import { autoContinuationEnabled, env } from "@/lib/env";
+import { autoContinuationEnabled, env, getEffectiveSignalMode } from "@/lib/env";
 import type {
   EngineIntelligenceOutput,
   IntelligenceInputSnapshot,
@@ -25,9 +25,9 @@ import { logger } from "@/lib/log";
 
 const log = logger("auto-gate");
 
-/** Current signal mode from env (static per worker process). */
+/** Current signal mode — runtime override (UI-selectable) falling back to env. */
 export function currentSignalMode(): SignalMode {
-  return env().SIGNAL_MODE as SignalMode;
+  return getEffectiveSignalMode() as SignalMode;
 }
 
 export function computeAutoTradeAllowed(

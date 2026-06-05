@@ -1,11 +1,6 @@
-import { PaperDashboard } from "@/components/paper/PaperDashboard";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
+/** Legacy paper dashboard → Wallet is the canonical positions view. */
 export default function PaperPage() {
-  return (
-    <main className="min-h-screen bg-bg p-4 text-fg">
-      <PaperDashboard />
-    </main>
-  );
+  redirect("/wallet");
 }

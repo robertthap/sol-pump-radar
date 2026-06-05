@@ -35,6 +35,13 @@ describe("estimateEntryMcapUsd", () => {
     assert.equal(estimateEntryMcapUsd(null, 20, 40_000), null);
     assert.equal(estimateEntryMcapUsd(10, 0, 40_000), null);
   });
+
+  it("returns null for implausible ratios (basis mismatch / graduated)", () => {
+    // virtual entry (~31) vs real-reserve current (~1) → ratio 31, squared 961:
+    // the old bug fabricated a ~$5M mcap from a $5k coin. Now guarded.
+    assert.equal(estimateEntryMcapUsd(31, 1, 5_000), null);
+    assert.equal(estimateEntryMcapUsd(1, 31, 5_000), null);
+  });
 });
 
 describe("resolveSellAllSessionFilter", () => {

@@ -96,6 +96,13 @@ const EnvSchema = z.object({
   SHADOW_LEARN_SIZE_SOL: z.coerce.number().positive().default(0.03),
   /** launch = sniper; profit = continuation; hybrid = both launch analytics + Dex continuation. */
   SIGNAL_MODE: z.enum(["launch", "profit", "hybrid"]).default("hybrid"),
+  /**
+   * Max REAL (pump/DEX) market cap, in USD, to allow a launch/hybrid auto-entry.
+   * The entry gate scores on bonding-curve data, so a coin that already graduated
+   * to a multi-$M DEX cap can slip through as a "launch". 0 = disabled (default).
+   * Set e.g. 100000 to keep auto-trade to fresh, pre-/early-graduation coins.
+   */
+  MAX_ENTRY_MCAP_USD: z.coerce.number().min(0).default(0),
   /** Override analytics active-mint window (minutes). Defaults by SIGNAL_MODE. */
   ACTIVE_MINT_WINDOW_MINUTES: z.coerce.number().int().min(5).max(720).optional(),
   /** Looser auto-trader entry gates for paper/demo sessions. */
@@ -359,26 +366,47 @@ export function rpcWssUrls() {
   return configured;
 }
 
+export type SignalMode = "launch" | "profit" | "hybrid";
+
+/**
+ * Runtime override for SIGNAL_MODE so the strategy can be switched from the UI
+ * without editing .env or restarting. Process-local (null → use the env default);
+ * persisted in `user_settings` and loaded into each process — the worker refreshes
+ * it on a timer (orchestrator) and the web API sets it on change. All the
+ * mode helpers below read it via getEffectiveSignalMode(), so one toggle flows
+ * through the gate, entry filter, learner, and engines.
+ */
+let signalModeOverride: SignalMode | null = null;
+
+export function setSignalModeOverride(mode: SignalMode | null): void {
+  signalModeOverride = mode;
+}
+
+export function getEffectiveSignalMode(): SignalMode {
+  return signalModeOverride ?? (env().SIGNAL_MODE as SignalMode);
+}
+
 export function activeMintWindowMinutes(): number {
   const e = env();
   if (e.ACTIVE_MINT_WINDOW_MINUTES != null) return e.ACTIVE_MINT_WINDOW_MINUTES;
-  if (e.SIGNAL_MODE === "launch") return 15;
-  if (e.SIGNAL_MODE === "hybrid") return 180;
+  const m = getEffectiveSignalMode();
+  if (m === "launch") return 15;
+  if (m === "hybrid") return 180;
   return 240;
 }
 
 export function isProfitSignalMode(): boolean {
-  const m = env().SIGNAL_MODE;
+  const m = getEffectiveSignalMode();
   return m === "profit" || m === "hybrid";
 }
 
 export function isHybridSignalMode(): boolean {
-  return env().SIGNAL_MODE === "hybrid";
+  return getEffectiveSignalMode() === "hybrid";
 }
 
 /** launch + hybrid modes allow the fresh-launch (newborn) entry tier. */
 export function allowsLaunchTier(): boolean {
-  const m = env().SIGNAL_MODE;
+  const m = getEffectiveSignalMode();
   return m === "launch" || m === "hybrid";
 }
 

@@ -6,7 +6,7 @@ import Link from "next/link";
 
 import { shortAddr, relTime } from "@/lib/ui/format";
 
-import { logKindLabel, logSourceLabel } from "@/lib/ui/plain-labels";
+import { logKindLabel, logSourceLabel, formatAutoSkip } from "@/lib/ui/plain-labels";
 
 import { useTradePage } from "@/components/trade/TradePageProvider";
 
@@ -408,19 +408,19 @@ export function AutoTradeLog() {
 
               {diagnostics.workersRunning
 
-                ? "workers ticking"
+                ? "Auto-trader running"
 
                 : diagnostics.workersExpected
 
-                  ? "workers stale (no recent tick)"
+                  ? "Auto-trader idle (no recent activity)"
 
-                  : "WORKERS off"}
+                  : "Background services off"}
 
             </span>
 
             {" · "}
 
-            {diagnostics.pendingBuy90s} pending BUY (90s)
+            {diagnostics.pendingBuy90s} buys queued (last 90s)
 
           </p>
 
@@ -460,13 +460,13 @@ export function AutoTradeLog() {
 
                 : diagnostics?.workersExpected === false
 
-                  ? "WORKERS=off in .env.local — set WORKERS=on and restart `pnpm dev`."
+                  ? "Background services are not running. Open System status from the top banner."
 
                   : diagnostics && diagnostics.pendingBuy90s === 0
 
-                    ? "0 pending buys — decision pipeline may be idle; see diagnostics above."
+                    ? "No buys queued yet — the bot is watching for qualifying signals."
 
-                    : "Waiting for qualifying buy signals…"
+                    : "Waiting for qualifying buy signals..."
 
               : "Waiting for auto-trade activity…"}
 
@@ -507,7 +507,21 @@ export function AutoTradeLog() {
                   </Link>
                 )}
 
-                <span className="min-w-0 flex-1 text-muted">{e.message}</span>
+                {e.kind === "skip" ? (
+                  (() => {
+                    const s = formatAutoSkip(e.message);
+                    return (
+                      <span
+                        className="min-w-0 flex-1 text-muted"
+                        title={`${s.hint}\n\n(${e.message})`}
+                      >
+                        {s.label}
+                      </span>
+                    );
+                  })()
+                ) : (
+                  <span className="min-w-0 flex-1 text-muted">{e.message}</span>
+                )}
 
                 {e.pnlSol != null && (
 

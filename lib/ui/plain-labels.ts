@@ -35,6 +35,65 @@ export function autoSkipReasonLabel(reason: string): string {
   return map[reason] ?? reason.replace(/^auto:/, "").replace(/_/g, " ");
 }
 
+/**
+ * Plain-language label + "what this means" hint for ANY auto-trader skip reason —
+ * both the `auto:*` executor codes and the freeform filter messages that show in
+ * the live log (e.g. "confluence 0.21 < 0.32", "coin gate failed: grad=0.06").
+ */
+export function formatAutoSkip(reason: string): { label: string; hint: string } {
+  const r = (reason ?? "").toLowerCase();
+  const match = (re: RegExp) => re.test(r);
+
+  if (match(/confluence/)) {
+    return { label: "Signal too weak", hint: "Conviction score was below the entry threshold — the setup wasn't strong enough." };
+  }
+  if (match(/no (live )?price|no v_?sol|no vsol/)) {
+    return { label: "No live price yet", hint: "Couldn't fetch a fresh pool price for this brand-new mint. It retries automatically." };
+  }
+  if (match(/insider/)) {
+    return { label: "Insider-concentrated", hint: "Too much supply sits with insider/connected wallets — high dump risk." };
+  }
+  if (match(/rug/)) {
+    return { label: "Rug risk too high", hint: "Rug-pattern score crossed the safety cap for entries." };
+  }
+  if (match(/wash/)) {
+    return { label: "Wash-trading risk", hint: "Volume looks self-traded rather than organic." };
+  }
+  if (match(/creator/)) {
+    return { label: "Risky creator", hint: "The deployer wallet has a poor launch/rug history." };
+  }
+  if (match(/bundle|mechanical/)) {
+    return { label: "Bundled launch", hint: "Coordinated bot/bundle buying at launch — not organic demand." };
+  }
+  if (match(/too early|sniper window/)) {
+    return { label: "Too new — waiting", hint: "Inside the early sniper window; the system waits for real confirmation." };
+  }
+  if (match(/too late|extended|parabolic/)) {
+    return { label: "Too late / extended", hint: "Already ran too far; entering now is poor risk/reward." };
+  }
+  if (match(/thin liquidity|vsol=|size .* too large/)) {
+    return { label: "Liquidity too thin", hint: "Pool too shallow for the trade size without heavy slippage." };
+  }
+  if (match(/edge/)) {
+    return { label: "Edge too low", hint: "Expected profit after fees didn't clear the minimum edge." };
+  }
+  if (match(/already_open|already holding/)) {
+    return { label: "Already holding", hint: "You already have an open position in this coin." };
+  }
+  if (match(/max_concurrent|positions open/)) {
+    return { label: "At position limit", hint: "Max concurrent positions reached — frees up as trades close." };
+  }
+  if (match(/micro-sim/)) {
+    return { label: "Execution risk (sim)", hint: "Pre-trade simulation flagged slippage/thin depth/gas spike." };
+  }
+  if (match(/kill-switch|cooldown/)) {
+    return { label: "Paused (risk guard)", hint: "Kill-switch paused entries after a loss streak; auto-resumes after cooldown." };
+  }
+  // Fall back to the executor-code map, then a generic cleanup.
+  const code = autoSkipReasonLabel(reason);
+  return { label: code, hint: "Filtered by the entry gate." };
+}
+
 export const HALT_LABEL = "Pause trading";
 export const RESUME_LABEL = "Resume trading";
 

@@ -71,8 +71,8 @@ export function PumpCoinSearch({
   }
 
   return (
-    <div className={compact ? "mb-0 min-w-[280px] flex-1" : "mb-4"}>
-      <div className="flex gap-2" suppressHydrationWarning>
+    <div className={compact ? "mb-0 w-full min-w-0 flex-1 sm:min-w-[12rem]" : "mb-4 w-full"}>
+      <div className="flex w-full min-w-0 gap-2" suppressHydrationWarning>
         <input
           type="text"
           value={q}

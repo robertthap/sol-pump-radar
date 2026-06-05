@@ -3,7 +3,14 @@ import { useCallback, useState } from "react";
 import Link from "next/link";
 import { useTradingMode } from "@/components/TradingModeProvider";
 import { useVisibleInterval } from "@/lib/ui/useVisibleInterval";
+import { SessionWalletBalance } from "@/components/SessionWalletBalance";
 import { submitDemoTrade, submitLiveTrade, submitSellAll } from "@/lib/trade-client";
+import { SOL_USD } from "@/lib/dex/curve-mcap";
+
+/** Approx USD from SOL using the app-wide SOL_USD constant. */
+function usd(sol: number): string {
+  return `≈ $${Math.round(sol * SOL_USD).toLocaleString()}`;
+}
 
 type Position = {
   id: string;
@@ -102,8 +109,10 @@ export function HoldingsPage() {
 
   return (
     <div className="space-y-3">
+      <SessionWalletBalance variant="hero" showDemoReset showWalletControls />
+
       {stats && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           <div className="card p-2 text-center">
             <p className="text-[9px] uppercase text-muted">Win rate</p>
             <p className="font-mono text-lg font-semibold text-ok">
@@ -123,16 +132,11 @@ export function HoldingsPage() {
               {stats.totalPnlSol >= 0 ? "+" : ""}
               {stats.totalPnlSol.toFixed(4)}
             </p>
-            <p className="text-[9px] text-muted">SOL</p>
+            <p className="text-[9px] text-muted">SOL · {usd(stats.totalPnlSol)}</p>
           </div>
           <div className="card p-2 text-center">
             <p className="text-[9px] uppercase text-muted">Open</p>
             <p className="font-mono text-lg">{stats.openCount}</p>
-          </div>
-          <div className="card p-2 text-center">
-            <p className="text-[9px] uppercase text-muted">Equity</p>
-            <p className="font-mono text-lg">{stats.equitySol.toFixed(2)}</p>
-            <p className="text-[9px] text-muted">SOL demo</p>
           </div>
         </div>
       )}
@@ -156,7 +160,8 @@ export function HoldingsPage() {
         <p className="text-sm text-muted">No open positions.</p>
       ) : (
         <div className="card overflow-hidden">
-          <table className="table-feed w-full text-xs">
+          <div className="table-scroll">
+            <table className="table-feed w-full text-xs">
             <thead>
               <tr>
                 <th>Coin</th>
@@ -206,7 +211,8 @@ export function HoldingsPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 
@@ -214,7 +220,8 @@ export function HoldingsPage() {
         <>
           <h2 className="text-sm font-medium text-muted">Recent closed</h2>
           <div className="card overflow-hidden">
-            <table className="table-feed w-full text-xs">
+            <div className="table-scroll">
+              <table className="table-feed w-full text-xs">
               <thead>
                 <tr>
                   <th>Coin</th>
@@ -239,7 +246,8 @@ export function HoldingsPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         </>
       )}

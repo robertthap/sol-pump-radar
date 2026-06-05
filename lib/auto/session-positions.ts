@@ -5,12 +5,14 @@ import { getDb } from "@/lib/db/client";
 import { PAPER_TRADES_READ } from "@/lib/db/paper-read";
 import { env } from "@/lib/env";
 import { paperPnlSol } from "@/lib/paper/math";
+import { pnlFromMcap } from "@/lib/paper/mcap-pnl";
 import { riskBudgetFor } from "@/lib/risk/presets";
 import { fetchPumpFunCoin } from "@/lib/pump/fun-api";
 import {
   getActiveSession,
   getLatestSession,
 } from "@/lib/db/repos/auto-sessions";
+import { getUiTradingMode } from "@/lib/db/repos/trading-mode";
 import { latestVSolBatch } from "@/lib/db/repos/events";
 
 export type AutoTradeMarker = {
@@ -58,7 +60,7 @@ export type AutoSessionPositionsSnapshot = {
   };
 };
 
-import { estimateEntryMcapUsd } from "@/lib/paper/sell-helpers";
+import { mcapUsdFromVSol, effectiveVSolFromMcapUsd } from "@/lib/dex/curve-mcap";
 
 function markersForTrade(opts: {
   id: string;
@@ -190,15 +192,45 @@ export async function fetchAutoSessionPositions(
   const positions: AutoSessionPosition[] = rows.map((r) => {
     const isOpen = r.status === "open";
     const pump = pumpByMint.get(r.mint);
-    const liveVSol = isOpen ? (pump?.vSol ?? latest.get(r.mint) ?? null) : null;
-    const currentVSol = isOpen ? liveVSol : r.exit_v_sol;
     const currentMcapUsd = pump?.usdMarketCap ?? null;
-    const entryMcapUsd = estimateEntryMcapUsd(r.entry_v_sol, currentVSol, currentMcapUsd);
+    const graduated = (pump?.bondingPct ?? 0) >= 100;
+    // Current vSol basis must match entry_v_sol (= events.v_sol_after = virtual
+    // sol reserves). ON CURVE: use our on-chain resolver. GRADUATED: our vSol
+    // freezes at migration, so derive an effective vSol from the live DEX mcap —
+    // this keeps PnL tracking the real post-graduation price instead of stalling.
+    const liveVSol = isOpen
+      ? graduated
+        ? (effectiveVSolFromMcapUsd(currentMcapUsd) ?? latest.get(r.mint) ?? null)
+        : (latest.get(r.mint) ?? null)
+      : null;
+    const currentVSol = isOpen ? liveVSol : r.exit_v_sol;
+    // Entry mcap: prefer the value stamped at open; else the bonding-curve mcap
+    // from the entry vSol (always valid — entry is always on-curve). We never use
+    // the back-extrapolation here: it fabricates a huge "entry" on graduated coins.
+    const ef = r.entry_features as Record<string, unknown> | null;
+    const storedEntryMcap =
+      typeof ef?.entry_mcap_usd === "number" && Number.isFinite(ef.entry_mcap_usd) && ef.entry_mcap_usd > 0
+        ? (ef.entry_mcap_usd as number)
+        : null;
+    const entryMcapReal = ef?.entry_mcap_real === true;
+    const entryMcapUsd = storedEntryMcap ?? mcapUsdFromVSol(r.entry_v_sol ?? 0);
 
     let pnlSol = r.pnl_sol;
     let pctOfSize: number | null = null;
 
-    if (isOpen && r.entry_v_sol != null && currentVSol != null) {
+    if (isOpen && entryMcapReal && storedEntryMcap != null && currentMcapUsd != null && currentMcapUsd > 0) {
+      // Real market-cap PnL (pump/DEX) — accurate on and off the bonding curve.
+      const calc = pnlFromMcap({
+        sizeSol: r.size_sol,
+        entryMcapUsd: storedEntryMcap,
+        currentMcapUsd,
+        pumpFeesPct: budget.pumpFeesPct,
+        paperSlippagePct: budget.paperSlippagePct,
+      });
+      pnlSol = calc.pnlSol;
+      pctOfSize = calc.pctOfSize;
+      unrealizedPnlSol += calc.pnlSol;
+    } else if (isOpen && r.entry_v_sol != null && currentVSol != null) {
       const calc = paperPnlSol({
         sizeSol: r.size_sol,
         entryVSol: r.entry_v_sol,
@@ -263,8 +295,15 @@ export async function fetchAutoSessionPositions(
 export async function fetchAutoSessionPositionsSnapshot(
   limit = 40,
 ): Promise<AutoSessionPositionsSnapshot> {
-  const active = await getActiveSession();
-  const session = active ?? (await getLatestSession());
+  // Strict Demo/Real isolation: only surface a session that matches the current
+  // wallet mode (Demo↔paper, Real↔live). Otherwise a prior mode's positions would
+  // display under the wrong banner when the user switches without a new session.
+  const uiMode = await getUiTradingMode();
+  const wantMode: "paper" | "live" = uiMode === "real" ? "live" : "paper";
+  const activeRaw = await getActiveSession();
+  const active = activeRaw && activeRaw.mode === wantMode ? activeRaw : null;
+  const latest = activeRaw ?? (await getLatestSession());
+  const session = latest && latest.mode === wantMode ? latest : null;
   if (!session) {
     return {
       active: false,

@@ -5,6 +5,7 @@ import { cached, invalidateCache } from "@/lib/api/short-cache";
 import {
   fetchDemoAccount,
   getUiTradingMode,
+  hasActiveTradingSession,
   type UiTradingMode,
 } from "@/lib/db/repos/trading-mode";
 import { executeWebMutation, WebWriteOp } from "@/lib/runtime/web-writes";
@@ -21,10 +22,12 @@ export async function GET() {
       const mode = await getUiTradingMode();
       const demo = await fetchDemoAccount();
       const wallet = await getStatus();
+      const activeSession = await hasActiveTradingSession(mode);
       const e = env();
       return {
         mode,
         needsSelection: mode == null,
+        activeSession,
         demo,
         real: {
           walletUnlocked: wallet.isUnlocked,
@@ -41,7 +44,12 @@ export async function GET() {
   );
 }
 
-type PutBody = { mode?: UiTradingMode; demoStartSol?: number; resetDemo?: boolean };
+type PutBody = {
+  mode?: UiTradingMode;
+  demoStartSol?: number;
+  resetDemo?: boolean;
+  clearSession?: boolean;
+};
 
 export async function PUT(req: Request) {
   await bootDb();
@@ -51,7 +59,7 @@ export async function PUT(req: Request) {
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  if (body.mode != null || body.demoStartSol != null) {
+  if (body.clearSession === true || body.mode != null || body.demoStartSol != null) {
     if (body.mode != null && body.mode !== "demo" && body.mode !== "real") {
       return NextResponse.json({ error: "mode must be demo or real" }, { status: 400 });
     }
@@ -67,6 +75,7 @@ export async function PUT(req: Request) {
           JSON.stringify({
             mode: body.mode ?? undefined,
             demoStartSol: body.demoStartSol ?? undefined,
+            clearSession: body.clearSession === true ? true : undefined,
             strategy_id: "operator",
           }),
           `settings:mode-req:${correlationId}`,

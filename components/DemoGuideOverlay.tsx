@@ -19,9 +19,9 @@ const STEPS = [
 ] as const;
 
 const GLOSSARY: Array<{ term: string; plain: string }> = [
-  { term: "SOL", plain: "Solana currency — like dollars for this app" },
-  { term: "Signal strength (conf)", plain: "How confident the bot is — higher is better" },
-  { term: "Pool size (v_sol)", plain: "How much money is in the coin's bonding curve" },
+  { term: "SOL", plain: "Solana currency - like dollars for this app" },
+  { term: "Signal strength", plain: "How confident the bot is - higher is better" },
+  { term: "Pool size", plain: "How much money is in the coin's bonding curve" },
   { term: "Take profit / Stop loss", plain: "Auto-sell when up ~40% or down ~15%" },
   { term: "Rug", plain: "Scam coin where creators steal liquidity" },
 ];
@@ -53,7 +53,7 @@ export function DemoGuideOverlay() {
   }
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-gray-900/50 p-4 sm:items-center">
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-bg/50 p-4 sm:items-center">
       <div className="card w-full max-w-md p-5 shadow-xl">
         <p className="mb-1 text-[10px] uppercase tracking-wide text-accent">Quick start</p>
         <h2 className="mb-3 text-lg font-semibold">{STEPS[step]?.title ?? "Ready"}</h2>
@@ -79,12 +79,12 @@ export function DemoGuideOverlay() {
 
         {step === 0 && (
           <button type="button" className="btn btn-buy mb-2 w-full py-2" onClick={() => void pickDemo()}>
-            Use Demo — play money
+            Use Demo - play money
           </button>
         )}
         {step >= 1 && (
           <p className="mb-3 text-xs text-ok">
-            Demo selected — press the green <b>Start auto-trade</b> button above.
+            Demo selected - press the green <b>Start auto-trade</b> button above.
           </p>
         )}
 
@@ -99,7 +99,7 @@ export function DemoGuideOverlay() {
           <ul className="mb-4 max-h-40 space-y-1 overflow-auto text-[11px] text-muted">
             {GLOSSARY.map((g) => (
               <li key={g.term}>
-                <span className="text-fg">{g.term}</span> — {g.plain}
+                <span className="text-fg">{g.term}</span> - {g.plain}
               </li>
             ))}
           </ul>
@@ -109,11 +109,6 @@ export function DemoGuideOverlay() {
           <button type="button" className="btn btn-ghost flex-1" onClick={dismiss}>
             Got it
           </button>
-          {step < STEPS.length - 1 && step > 0 && (
-            <button type="button" className="btn btn-ghost flex-1" onClick={() => setStep((s) => s + 1)}>
-              Next
-            </button>
-          )}
         </div>
       </div>
     </div>

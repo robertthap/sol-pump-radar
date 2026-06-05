@@ -122,9 +122,15 @@ async function processCommand(r: {
   try {
     switch (r.type) {
       case "SETTINGS_MODE_REQUESTED": {
+        const clearSession = r.payload.clearSession === true;
         const mode = r.payload.mode as UiTradingMode | undefined;
         const demoStartSol = r.payload.demoStartSol as number | undefined;
-        if (mode != null) await setUiTradingMode(mode);
+        if (clearSession) {
+          const { clearUiTradingMode } = await import("@/lib/db/repos/trading-mode");
+          await clearUiTradingMode();
+        } else if (mode != null) {
+          await setUiTradingMode(mode);
+        }
         if (demoStartSol != null) await setDemoStartSol(demoStartSol);
         invalidateCache("settings:mode");
         invalidateCache("settings:mode-lite");

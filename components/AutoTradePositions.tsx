@@ -6,15 +6,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import Link from "next/link";
 
-import { ExternalDexEmbed, type DexTradeMarker } from "@/components/ExternalDexEmbed";
-
-import { TokenChart, type TradeMarker } from "@/components/TokenChart";
-
-import { TradeEntryStrip } from "@/components/trade/TradeEntryStrip";
+import { TradeMarkerChart, type ChartMarker } from "@/components/TradeMarkerChart";
 
 import { useTradePage } from "@/components/trade/TradePageProvider";
 
-import { useTradingMode } from "@/components/TradingModeProvider";
+import { useTradingMode, type UiTradingMode } from "@/components/TradingModeProvider";
+import { PositionSourceBadge } from "@/lib/ui/position-source-badge";
 
 import { getJson, invalidateClientGet } from "@/lib/ui/client-get";
 
@@ -182,6 +179,8 @@ function PositionRow({
 
   now,
 
+  uiMode,
+
 }: {
 
   p: AutoPosition;
@@ -195,6 +194,8 @@ function PositionRow({
   busy?: boolean;
 
   now: number;
+
+  uiMode: UiTradingMode | null;
 
 }) {
 
@@ -236,11 +237,7 @@ function PositionRow({
 
             <span className="truncate font-medium">{label}</span>
 
-            {p.source === "live" && (
-
-              <span className="rounded bg-warn/15 px-1 py-0.5 text-[8px] uppercase text-warn">live</span>
-
-            )}
+            <PositionSourceBadge uiMode={uiMode} source={p.source} />
 
           </div>
 
@@ -379,18 +376,7 @@ function PositionsBox({
 
 
 
-function chartMarkersForPosition(p: AutoPosition): TradeMarker[] {
-  return p.markers.map((m) => ({
-    id: m.id,
-    ts: m.ts,
-    side: m.side,
-    vSol: m.vSol,
-    sizeSol: m.side === "buy" ? p.sizeSol : null,
-    mcapUsd: m.side === "buy" ? p.entryMcapUsd : p.currentMcapUsd,
-  }));
-}
-
-function dexMarkersForPosition(p: AutoPosition): DexTradeMarker[] {
+function dexMarkersForPosition(p: AutoPosition): ChartMarker[] {
 
   return p.markers.map((m) => ({
 
@@ -436,10 +422,7 @@ function PositionChartPanel({
 
   const label = p.symbol ?? shortAddr(p.mint, 4, 4);
 
-  const [dexOpen, setDexOpen] = useState(false);
-
   const entryChips = dexMarkersForPosition(p);
-  const chartMarkers = chartMarkersForPosition(p);
 
   return (
 
@@ -525,57 +508,14 @@ function PositionChartPanel({
 
       <div className="space-y-2 px-3 pb-3">
 
-        <TradeEntryStrip markers={entryChips} />
-
-        <div className="rounded-lg border border-border/50 bg-panel/30 p-2">
-
-          <p className="mb-2 text-[10px] text-muted">
-
-            Your entry is pinned on the candle below — green ring marks the exact buy time and pool level.
-
-          </p>
-
-          <TokenChart
-
-            mint={p.mint}
-
-            hours={6}
-
-            tradeMarkers={chartMarkers}
-
-            entryLine={p.entryVSol}
-
-            hideSignalLegend
-
-            showTradeCrosshair
-
-          />
-
-        </div>
-
-        <details
-
-          className="rounded-lg border border-border/40 bg-panel/10"
-
-          open={dexOpen}
-
-          onToggle={(e) => setDexOpen((e.target as HTMLDetailsElement).open)}
-
-        >
-
-          <summary className="cursor-pointer px-3 py-2 text-[11px] font-medium text-muted hover:text-fg">
-
-            DexScreener reference (optional) ↗
-
-          </summary>
-
-          <div className="border-t border-border/40 px-2 pb-2">
-
-            <ExternalDexEmbed mint={p.mint} compact showTradeBadges={false} />
-
-          </div>
-
-        </details>
+        <TradeMarkerChart
+          mint={p.mint}
+          markers={entryChips}
+          currentMcapUsd={p.currentMcapUsd}
+          entryMcapUsd={p.entryMcapUsd}
+          pnlPct={p.pctOfSize}
+          status={p.status}
+        />
 
       </div>
 
@@ -719,6 +659,19 @@ export function AutoTradePositions() {
 
         if (p.source === "live" || mode === "real") {
 
+          const _sym = p.symbol ?? shortAddr(p.mint, 4, 4);
+          const _pnl =
+            p.pnlSol != null ? `${p.pnlSol >= 0 ? "+" : ""}${p.pnlSol.toFixed(4)} SOL` : "unknown";
+          if (
+            !window.confirm(
+              `REAL on-chain sell — this spends real SOL.\n\n` +
+                `Sell 100% of ${_sym} (${p.sizeSol.toFixed(4)} SOL position)?\n` +
+                `Unrealized PnL: ${_pnl}\n` +
+                `A ~1% pump fee + slippage apply.`,
+            )
+          ) {
+            return;
+          }
           const j = await submitLiveTrade("/api/trade/quick-sell", {
 
             mint: p.mint,
@@ -799,7 +752,14 @@ export function AutoTradePositions() {
 
       if (scope === "auto" && openCount === 0) return;
 
-      if (!window.confirm(label)) return;
+      const _totalSol = (data?.open ?? []).reduce((a, p) => a + (p.sizeSol || 0), 0);
+      const _isReal = (data?.open ?? []).some((p) => p.source === "live");
+      const _detail =
+        `${label}\n\nTotal size: ${_totalSol.toFixed(4)} SOL across ${openCount} position(s).` +
+        (_isReal
+          ? `\n\nREAL on-chain — this sells everything for real SOL. A ~1% fee + slippage apply.`
+          : ``);
+      if (!window.confirm(_detail)) return;
 
 
 
@@ -889,11 +849,11 @@ export function AutoTradePositions() {
 
         <div>
 
-          <h3 className="text-sm font-semibold">Auto holdings</h3>
+          <h3 className="text-sm font-semibold">Your trades</h3>
 
           <p className="text-[10px] text-muted">
 
-            Open and closed positions — click a token to load DexScreener chart with your entry
+            This auto-trade session only. Click a row for the chart with your entry marked.
 
           </p>
 
@@ -1037,6 +997,8 @@ export function AutoTradePositions() {
 
                   now={now}
 
+                  uiMode={mode}
+
                 />
 
               ))}
@@ -1074,6 +1036,8 @@ export function AutoTradePositions() {
                   }}
 
                   now={now}
+
+                  uiMode={mode}
 
                 />
 

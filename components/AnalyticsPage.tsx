@@ -60,6 +60,7 @@ type Overall = {
 type Summary = {
   windowHours: number;
   source: "all" | "paper" | "live";
+  mode?: "demo" | "real";
   overall: Overall;
   equity: EquityPoint[];
   daily: DailyPnl[];
@@ -77,16 +78,16 @@ const RANGES: Array<{ id: string; label: string; hours: number }> = [
 ];
 
 function fmtSol(v: number | null | undefined, signed = true, d = 3): string {
-  if (v == null || !Number.isFinite(v)) return "—";
+  if (v == null || !Number.isFinite(v)) return "-";
   const s = v > 0 && signed ? "+" : "";
   return s + v.toFixed(d);
 }
 function fmtPct(v: number | null | undefined, d = 1): string {
-  if (v == null || !Number.isFinite(v)) return "—";
+  if (v == null || !Number.isFinite(v)) return "-";
   return (v * 100).toFixed(d) + "%";
 }
 function fmtSec(s: number | null | undefined): string {
-  if (s == null || !Number.isFinite(s)) return "—";
+  if (s == null || !Number.isFinite(s)) return "-";
   if (s < 60) return `${Math.round(s)}s`;
   if (s < 3600) return `${(s / 60).toFixed(1)}m`;
   return `${(s / 3600).toFixed(1)}h`;
@@ -98,7 +99,7 @@ function pnlClass(v: number | null | undefined): string {
   return "text-muted";
 }
 function shortMint(m: string): string {
-  return m.length <= 12 ? m : `${m.slice(0, 4)}…${m.slice(-4)}`;
+  return m.length <= 12 ? m : `${m.slice(0, 4)}...${m.slice(-4)}`;
 }
 
 type RugStats = {
@@ -113,7 +114,8 @@ type RugStats = {
 
 export function AnalyticsClient() {
   const [hours, setHours] = useState(24);
-  const [source, setSource] = useState<"all" | "paper" | "live">("all");
+  // Analytics source is enforced server-side by the current trading mode (Demo→paper, Real→live).
+  const source = "all" as const;
   const [data, setData] = useState<Summary | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -171,7 +173,7 @@ export function AnalyticsClient() {
   }, [data]);
 
   return (
-    <main className="mx-auto max-w-[1600px] px-4 pb-24">
+    <main className="app-page app-page-wide">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-base font-semibold tracking-tight">Analytics</h1>
         <div className="flex flex-wrap items-center gap-1">
@@ -191,31 +193,21 @@ export function AnalyticsClient() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-0 rounded-md border border-border p-0.5">
-            {(["all", "paper", "live"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setSource(s)}
-                className={`px-2.5 py-1 text-xs uppercase ${
-                  source === s
-                    ? "rounded-sm bg-accent/15 text-accent"
-                    : "text-muted hover:text-fg"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+          <span
+            className="rounded-md border border-border px-2.5 py-1 text-xs font-medium uppercase text-muted"
+            title="Analytics are scoped to your current wallet mode"
+          >
+            {data?.mode === "real" ? "Real" : "Demo"} trades
+          </span>
           <a
-            className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:bg-white/5 hover:text-fg"
-            href={`/api/trades/export?source=${source}&status=closed`}
+            className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:bg-panel/5 hover:text-fg"
+            href={`/api/trades/export?source=${data?.mode === "real" ? "live" : "paper"}&status=closed`}
             download
             title="Download closed trades as CSV (tax records)"
           >
             Download CSV
           </a>
-          {loading && <span className="text-[10px] text-muted">loading…</span>}
+          {loading && <span className="text-[10px] text-muted">loading...</span>}
           {err && <span className="text-[10px] text-bad">{err}</span>}
         </div>
       </div>
@@ -234,7 +226,7 @@ export function AnalyticsClient() {
           </span>
           {rugStats.avgPeakVSol != null && rugStats.avgDrawdown != null && (
             <span className="ml-2 text-muted">
-              · avg peak v_sol {rugStats.avgPeakVSol.toFixed(2)} → drawdown{" "}
+              · avg peak pool {rugStats.avgPeakVSol.toFixed(2)} to drawdown{" "}
               {(rugStats.avgDrawdown * 100).toFixed(0)}%
             </span>
           )}
@@ -242,7 +234,7 @@ export function AnalyticsClient() {
       )}
 
       <section className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
-        <Stat label="Trades" value={data ? String(data.overall.trades) : "—"} />
+        <Stat label="Trades" value={data ? String(data.overall.trades) : "-"} />
         <Stat
           label="Win rate"
           value={fmtPct(data?.overall.winRate ?? null, 0)}
@@ -353,7 +345,7 @@ export function AnalyticsClient() {
         </div>
 
         <div className="card overflow-hidden">
-          <div className="grid grid-cols-2 divide-x divide-border">
+          <div className="grid grid-cols-1 divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
             <div>
               <div className="border-b border-border px-3 py-2 text-[10px] uppercase tracking-wider text-muted">
                 Top winners
@@ -411,7 +403,7 @@ export function AnalyticsClient() {
             </span>
           </h2>
         </div>
-        <div className="max-h-[600px] overflow-auto">
+        <div className="table-scroll table-scroll-wide max-h-[600px] overflow-y-auto">
           <table className="table-feed">
             <thead>
               <tr>
@@ -456,7 +448,7 @@ export function AnalyticsClient() {
                         {t.symbol ?? shortMint(t.mint)}
                       </Link>
                     </td>
-                    <td className="font-mono text-[10px] text-muted">{t.action ?? "—"}</td>
+                    <td className="font-mono text-[10px] text-muted">{t.action ?? "-"}</td>
                     <td>
                       <span
                         className={`pill-side ${
@@ -483,7 +475,7 @@ export function AnalyticsClient() {
                     <td className={`text-right font-mono ${pnlClass(t.pnlPct)}`}>
                       {fmtPct(t.pnlPct, 1)}
                     </td>
-                    <td className="text-[10px] text-muted">{t.exitReason ?? "—"}</td>
+                    <td className="text-[10px] text-muted">{t.exitReason ?? "-"}</td>
                     <td className="text-right font-mono text-muted">{fmtSec(t.holdSeconds)}</td>
                     <td className="font-mono text-[10px] text-muted">
                       {new Date(t.openedAt).toLocaleTimeString()}

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback } from "react";
 import { useModal, useDisconnect, useSolana } from "@phantom/react-sdk";
@@ -23,7 +23,7 @@ export function PhantomWalletChip() {
     <span className="flex items-center gap-1.5 font-mono text-[10px]">
       {connected ? (
         <>
-          <span className="text-emerald-700">Phantom {shortAddr(solana.publicKey!)}</span>
+          <span className="text-ok">Phantom {shortAddr(solana.publicKey!)}</span>
           <button type="button" className="btn-ghost text-[10px]" onClick={() => void disconnect()}>
             Disconnect
           </button>

@@ -1,5 +1,9 @@
 import "server-only";
-import { fetchDemoAccount, getUiTradingMode } from "@/lib/db/repos/trading-mode";
+import {
+  fetchDemoAccount,
+  getUiTradingMode,
+  hasActiveTradingSession,
+} from "@/lib/db/repos/trading-mode";
 import { env } from "@/lib/env";
 import { getStatus } from "@/lib/wallet/session";
 
@@ -7,10 +11,12 @@ export async function fetchModeLiteSnapshot() {
   const mode = await getUiTradingMode();
   const demo = await fetchDemoAccount();
   const wallet = await getStatus();
+  const activeSession = await hasActiveTradingSession(mode);
   const e = env();
   return {
     mode,
     needsSelection: mode == null,
+    activeSession,
     demo,
     real: {
       walletUnlocked: wallet.isUnlocked,

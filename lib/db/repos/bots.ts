@@ -226,6 +226,62 @@ export async function fetchSmartMoney(opts: SmartMoneyOpts = {}): Promise<SmartM
     }));
 }
 
+/** Single wallet's full profile (no edge/sample filters) — for the copy-trade analyzer. */
+export async function fetchWalletProfile(wallet: string): Promise<SmartMoneyRow | null> {
+  const res = await getDb().execute(sql`
+    SELECT wp.wallet,
+      wp.trade_count, wp.distinct_mints, wp.closed_mints,
+      wp.avg_return, wp.std_return, wp.t_stat,
+      wp.last_return, wp.last5_return, wp.last10_return,
+      wp.is_bump_bot, wp.sniper_rate, wp.bundle_rate,
+      to_char(wp.last_seen, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
+      cm.cluster_id::text AS cluster_id,
+      c.kind::text         AS cluster_kind,
+      c.member_count::int  AS cluster_members,
+      c.confidence::float8 AS cluster_confidence
+    FROM wallet_profiles wp
+    LEFT JOIN cluster_members cm ON cm.wallet = wp.wallet
+    LEFT JOIN clusters c         ON c.id = cm.cluster_id
+    WHERE wp.wallet = ${wallet}
+  `);
+  type Raw = {
+    wallet: string;
+    trade_count: number; distinct_mints: number; closed_mints: number;
+    avg_return: number | null; std_return: number | null; t_stat: number | null;
+    last_return: number | null; last5_return: number | null; last10_return: number | null;
+    is_bump_bot: boolean; sniper_rate: number | null; bundle_rate: number | null;
+    last_seen: string | null;
+    cluster_id: string | null; cluster_kind: string | null;
+    cluster_members: number | null; cluster_confidence: number | null;
+  };
+  const rows = (res as unknown as { rows: Raw[] }).rows;
+  if (rows.length === 0) return null;
+  // A wallet may be in >1 cluster — keep the most severe (bundle > sniper > co-buy).
+  const priority = (k: string | null) =>
+    k === "bundle_ring" ? 3 : k === "sniper_ring" ? 2 : k === "co_buy" ? 1 : 0;
+  const r = rows.reduce((a, b) => (priority(b.cluster_kind) > priority(a.cluster_kind) ? b : a));
+  return {
+    wallet: r.wallet,
+    tradeCount: r.trade_count,
+    distinctMints: r.distinct_mints,
+    closedMints: r.closed_mints,
+    avgReturn: r.avg_return,
+    stdReturn: r.std_return,
+    tStat: r.t_stat,
+    lastReturn: r.last_return,
+    last5Return: r.last5_return,
+    last10Return: r.last10_return,
+    isBumpBot: r.is_bump_bot,
+    sniperRate: r.sniper_rate,
+    bundleRate: r.bundle_rate,
+    lastSeen: r.last_seen,
+    clusterId: r.cluster_id,
+    clusterKind: r.cluster_kind,
+    clusterMembers: r.cluster_members,
+    clusterConfidence: r.cluster_confidence,
+  };
+}
+
 /**
  * Returns set of wallets that the recent buy flow on the given mint contains,
  * marked with their wallet-profile signals. Used by the wallet-gate to decide

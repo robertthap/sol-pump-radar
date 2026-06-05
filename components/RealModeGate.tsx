@@ -42,25 +42,25 @@ export function RealModeGate({ open, onCancel, onConfirm }: Props) {
   const canProceed = stats?.recommended || ack;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/60 p-4">
-      <div className="card w-full max-w-md p-5 shadow-xl">
-        <h2 className="mb-2 text-lg font-semibold">Switch to Real mode?</h2>
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-bg/60 p-3 sm:items-center sm:p-4">
+      <div className="card max-h-[min(90dvh,640px)] w-full max-w-md overflow-y-auto p-5 shadow-xl">
+        <h2 className="mb-2 text-lg font-semibold">Start a real wallet session?</h2>
         <p className="mb-3 text-sm text-muted">
           Real mode uses your wallet and real SOL. You can lose everything. Demo mode is recommended
           until you have evidence the bot works for you.
         </p>
 
-        {loading && <p className="mb-3 text-xs text-muted">Checking demo history…</p>}
+        {loading && <p className="mb-3 text-xs text-muted">Checking demo history...</p>}
         {stats && (
           <ul className="mb-3 space-y-1 text-xs text-muted">
             <li>
               Demo history: {stats.demoDays} day(s), {stats.closedDemoTrades} closed demo trade(s)
             </li>
             <li className={stats.meetsDemoTime ? "text-ok" : ""}>
-              {stats.meetsDemoTime ? "✓" : "○"} 7+ days in demo
+              {stats.meetsDemoTime ? "[x]" : "[ ]"} 7+ days in demo
             </li>
             <li className={stats.meetsTradeCount ? "text-ok" : ""}>
-              {stats.meetsTradeCount ? "✓" : "○"} 20+ closed demo trades
+              {stats.meetsTradeCount ? "[x]" : "[ ]"} 20+ closed demo trades
             </li>
           </ul>
         )}
@@ -77,7 +77,7 @@ export function RealModeGate({ open, onCancel, onConfirm }: Props) {
           </label>
         )}
 
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <button type="button" className="btn btn-ghost flex-1" onClick={onCancel}>
             Stay on Demo
           </button>
@@ -87,7 +87,7 @@ export function RealModeGate({ open, onCancel, onConfirm }: Props) {
             disabled={!canProceed}
             onClick={onConfirm}
           >
-            Use Real mode
+            Use Real wallet
           </button>
         </div>
       </div>

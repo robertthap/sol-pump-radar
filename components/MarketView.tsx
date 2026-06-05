@@ -102,14 +102,16 @@ export function MarketView() {
 
   return (
     <div className="market-view">
-      <header className="mb-3 flex flex-wrap items-start justify-between gap-3">
-        <div>
+      <header className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-lg font-semibold tracking-tight">Market</h1>
           <p className="text-[11px] text-muted">
             Coins from {sourceHint || "pump.fun"} — each flagged by SolPump Radar
           </p>
         </div>
-        <PumpCoinSearch compact />
+        <div className="w-full min-w-0 sm:max-w-md">
+          <PumpCoinSearch compact />
+        </div>
       </header>
 
       <div className="market-legend mb-3 flex flex-wrap items-center gap-2">

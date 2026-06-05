@@ -7,8 +7,8 @@ const MarketView = dynamic(
   {
     ssr: false,
     loading: () => (
-      <main className="px-3 pb-8 pt-3">
-        <div className="card h-64 animate-pulse bg-gray-50" />
+      <main className="app-page !max-w-[1600px]">
+        <div className="card h-64 animate-pulse bg-bg" />
       </main>
     ),
   },
@@ -16,7 +16,7 @@ const MarketView = dynamic(
 
 export default function MarketPage() {
   return (
-    <main className="px-3 pb-8 pt-3">
+    <main className="app-page !max-w-[1600px]">
       <MarketView />
     </main>
   );

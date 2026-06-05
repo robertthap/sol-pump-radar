@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { BreakevenHint } from "@/components/BreakevenHint";
+import { SessionWalletBalance } from "@/components/SessionWalletBalance";
 import { TradeSizePicker } from "@/components/TradeSizePicker";
 import { useTradingMode } from "@/components/TradingModeProvider";
 import { useTradePage } from "@/components/trade/TradePageProvider";
@@ -72,6 +73,16 @@ export function AutoTradeHero() {
   const halted = data?.cbState === "HALTED";
   const isReal = uiMode === "real";
   const canStart = data && !halted && (!isReal || (data.canRunLive && data.liveExecution === "on"));
+  const startBlockedReason =
+    !data
+      ? null
+      : halted
+        ? "Trading is paused (circuit breaker)."
+        : isReal && !data.canRunLive
+          ? "Unlock your wallet on the Wallet page."
+          : isReal && data.liveExecution !== "on"
+            ? "Live execution is off in server settings."
+            : null;
   const sess = data?.session?.stats;
   const sessionSize = data?.session?.params?.sizeSol;
   const pnl = sess?.realizedPnlSol;
@@ -88,6 +99,19 @@ export function AutoTradeHero() {
       if (dailyCapEnabled) {
         const cap = Number(dailyCapSol);
         if (Number.isFinite(cap) && cap > 0) saveAutoDailyLossCapSol(cap);
+      }
+      if (isReal) {
+        const capNote = dailyCapEnabled ? ` Daily loss cap: ${dailyCapSol} SOL.` : "";
+        if (
+          !window.confirm(
+            `Start REAL auto-trading — the bot places on-chain trades with real SOL.\n\n` +
+              `Size: ${tradeSize} SOL per trade · preset: ${preset}.${capNote}\n` +
+              `It keeps trading until you press Stop. Continue?`,
+          )
+        ) {
+          setBusy(false);
+          return;
+        }
       }
       const j = await submitAutoQuickStart({
         preset,
@@ -122,6 +146,7 @@ export function AutoTradeHero() {
 
   return (
     <section className={`card overflow-hidden ${active ? "ring-2 ring-ok/50" : ""}`}>
+      <SessionWalletBalance variant="compact" />
       <div className="flex flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold">Auto-trade</h2>
@@ -187,10 +212,8 @@ export function AutoTradeHero() {
             </div>
           )}
           {halted && <p className="mt-1 text-xs text-warn">Trading paused — resume before starting.</p>}
-          {isReal && data && !data.canRunLive && (
-            <p className="mt-1 text-xs text-warn">
-              Live trading is disabled. Unlock your wallet or switch to Demo mode in the header.
-            </p>
+          {startBlockedReason && !active && (
+            <p className="mt-1 text-xs text-warn">{startBlockedReason}</p>
           )}
           {msg && <p className="mt-1 text-xs text-muted">{msg}</p>}
         </div>
@@ -258,6 +281,7 @@ export function AutoTradeHero() {
               className="btn btn-buy px-10 py-3 text-base font-semibold shadow-lg shadow-ok/20"
               onClick={quickStart}
               disabled={busy || !data || !canStart}
+              title={startBlockedReason ?? undefined}
             >
               {busy ? "Starting…" : "Start auto-trade"}
             </button>

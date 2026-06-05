@@ -116,7 +116,9 @@ export function WalletPanel() {
     }
   }
 
-  const showPhantom = mode === "real" && phantomConnectEnabled();
+  if (mode !== "real") return null;
+
+  const showPhantom = phantomConnectEnabled();
   const showLocalVault = !showPhantom || localVaultFallbackEnabled();
 
   if (!status && showLocalVault) {

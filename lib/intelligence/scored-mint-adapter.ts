@@ -4,7 +4,9 @@ import type { MintFlags } from "@/lib/db/repos/bots";
 import type { IntelligenceInputSnapshot, IntelligenceRiskFlags } from "@/lib/intelligence/types";
 import type { RankInput } from "@/lib/continuation/cross-mint-rank";
 
-const SOL_USD = 150;
+import { getSolUsdSync } from "@/lib/market/sol-usd";
+import { launchQualityScore, launchRankScore } from "@/lib/intelligence/launch-rank";
+import { relaxedTierEnabled } from "@/lib/trade/tier-control";
 
 /** Module score inputs — analytics ScoredMint or token_features fallback row. */
 export type TokenFeatureModuleScores = {
@@ -30,7 +32,7 @@ export function scoredMintToIntelligenceInput(s: ScoredMint): IntelligenceInputS
   return {
     mint: s.mint,
     age_seconds: age,
-    liquidity_usd: Math.max(0, vSol * SOL_USD),
+    liquidity_usd: Math.max(0, vSol * getSolUsdSync()),
     volume_m5: vol5,
     volume_m30: vol30,
     volume_h1: vol30 * 2,
@@ -55,11 +57,28 @@ export function rankInputFromScoredMint(s: ScoredMint): RankInput {
   const v5ago = f.vSol5mAgo ?? f.currentVSol ?? 1;
   const volAccel = v5ago > 0 && f.currentVSol != null ? (f.currentVSol - v5ago) / v5ago : 0;
 
+  // A6 de-bias: the old rank `confluence·0.45 + grad·0.55` was ≈ pure graduation
+  // progress (confluence itself ≈ grad − penalties), so fresh launches were ranked
+  // below mature coins regardless of velocity. Blend in maturity-independent launch
+  // quality so a fast fresh launch can out-rank a slow mature one. See launch-rank.ts.
+  const launchQuality = launchQualityScore({
+    velocity: volAccel,
+    uniqueBuyers5m: f.uniqueBuyers5m,
+    earlyUniqueBuyers: f.earlyUniqueBuyers,
+    buys5m: f.buys5m,
+    sells5m: f.sells5m,
+  });
+  // Profit-adaptive: lean into launches only while the loose/launch (relaxed) tier is
+  // proving profitable. When the learner disables it (negative expectancy), drop the
+  // launch tilt so the rank reverts to proven (confluence/continuation) signals —
+  // "focus on profitable trades, not just new launches".
+  const launchWeight = relaxedTierEnabled() ? 0.4 : 0.12;
+
   return {
     mint: s.mint,
-    continuationScore: s.confluenceScore * 0.45 + s.gradScore * 0.55,
+    continuationScore: launchRankScore(s.confluenceScore, launchQuality, launchWeight),
     volAcceleration: Math.max(0, volAccel + vol5 * 0.01),
-    weightedLiqUsd: Math.max(0, (f.currentVSol ?? 0) * SOL_USD),
+    weightedLiqUsd: Math.max(0, (f.currentVSol ?? 0) * getSolUsdSync()),
     priceChangeH24: (f.pumpMultiple ?? 1) * 50,
   };
 }

@@ -1,37 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useSolPrice } from "@/lib/ui/useSolUsd";
 
 type Health = {
-  runtimeProfile: "paper_safe" | "dev" | "live";
-  traderMode: "paper" | "devnet" | "live";
   uiTradingMode: "demo" | "real" | null;
-  workerAlive: boolean;
-  workersExpected: boolean;
   liveExecution: "on" | "off";
   liveDryRun: "on" | "off";
   circuitBreaker: string | null;
-  ingest: { ingestStaleSec: number | null; drops1h: number };
-};
-
-const toneFor = (h: Health): { color: string; label: string } => {
-  if (h.runtimeProfile === "live" && h.liveExecution === "on" && h.liveDryRun !== "on") {
-    return { color: "bg-red-700/30 text-red-200 border-red-700/40", label: "LIVE · REAL MONEY" };
-  }
-  if (h.runtimeProfile === "live") {
-    return { color: "bg-amber-700/30 text-amber-200 border-amber-700/40", label: "LIVE PROFILE · dry-run" };
-  }
-  if (h.runtimeProfile === "dev") {
-    return { color: "bg-sky-700/30 text-sky-200 border-sky-700/40", label: "DEVNET" };
-  }
-  return { color: "bg-emerald-700/30 text-emerald-200 border-emerald-700/40", label: "PAPER · safe" };
 };
 
 /**
- * Always-visible runtime banner. Source of truth: /api/runtime/health (Postgres).
+ * Always-visible session banner — one user-facing mode (Demo vs Real).
+ * Runtime/worker details live on /runtime only.
  */
 export function ModeBanner() {
   const [h, setH] = useState<Health | null>(null);
+  const { aud: solAud } = useSolPrice();
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +28,7 @@ export function ModeBanner() {
         const j = (await r.json()) as Health;
         if (!cancelled) setH(j);
       } catch {
-        /* keep last known state */
+        /* keep last */
       }
     };
     void tick();
@@ -55,49 +41,49 @@ export function ModeBanner() {
 
   if (!h) return null;
 
-  const tone = toneFor(h);
-  const workerOk = h.workerAlive;
-  const stale = h.ingest.ingestStaleSec != null && h.ingest.ingestStaleSec > 30;
-  const uiLabel =
-    h.uiTradingMode === "real" ? "UI: Real wallet" : h.uiTradingMode === "demo" ? "UI: Demo" : "UI: —";
+  const mode = h.uiTradingMode;
+  const halted = h.circuitBreaker === "HALTED";
+  const realLive =
+    mode === "real" && h.liveExecution === "on" && h.liveDryRun !== "on";
+
+  let tone: string;
+  let title: string;
+  let subtitle: string;
+
+  if (mode === "real") {
+    tone = realLive
+      ? "bg-red-800/50 text-red-50 border-red-600/60"
+      : "bg-amber-800/40 text-amber-50 border-amber-600/50";
+    title = realLive ? "REAL WALLET — LIVE TRADING" : "REAL WALLET";
+    subtitle = realLive
+      ? "Trades can spend real SOL. You can lose everything."
+      : h.liveDryRun === "on"
+        ? "Wallet connected — live orders are in dry-run (not sent)."
+        : "Unlock your wallet on the Wallet page to trade.";
+  } else if (mode === "demo") {
+    tone = "bg-emerald-800/45 text-emerald-50 border-emerald-600/50";
+    title = "DEMO — PLAY MONEY";
+    subtitle = "Simulated fills only. No real SOL at risk.";
+  } else {
+    tone = "bg-panel2 text-muted border-border";
+    title = "NO WALLET SELECTED";
+    subtitle = "Go home and pick Demo or Real to start.";
+  }
 
   return (
-    <div className={`flex flex-wrap items-center justify-center gap-3 border-b px-3 py-1 text-[11px] font-mono ${tone.color}`}>
-      <span className="font-semibold">{tone.label}</span>
-      <span className="opacity-70">·</span>
-      <span>{uiLabel}</span>
-      {h.liveDryRun === "on" && h.liveExecution === "on" && (
-        <>
-          <span className="opacity-70">·</span>
-          <span className="text-amber-200">live dry-run</span>
-        </>
-      )}
-      {h.circuitBreaker === "HALTED" && (
-        <>
-          <span className="opacity-70">·</span>
-          <span className="text-red-300">HALTED</span>
-        </>
-      )}
-      <span className="opacity-70">·</span>
-      <span>
-        worker:{" "}
-        <span className={workerOk ? "text-emerald-300" : "text-red-300"}>
-          {workerOk ? "alive" : h.workersExpected ? "DOWN" : "off"}
-        </span>
+    <div
+      className={`flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b px-3 py-2 text-center text-xs sm:text-sm ${tone}`}
+      role="status"
+    >
+      <span className="font-bold tracking-wide">{title}</span>
+      <span className="opacity-90">{subtitle}</span>
+      {halted && <span className="font-semibold text-red-200">Trading paused</span>}
+      <span className="hidden text-[10px] opacity-75 sm:inline">
+        1 SOL = A${solAud.toFixed(0)}
       </span>
-      <span className="opacity-70">·</span>
-      <span>
-        ingest:{" "}
-        <span className={stale ? "text-amber-300" : "text-emerald-300"}>
-          {h.ingest.ingestStaleSec == null ? "no data" : `${h.ingest.ingestStaleSec}s stale`}
-        </span>
-      </span>
-      {h.ingest.drops1h > 0 && (
-        <>
-          <span className="opacity-70">·</span>
-          <span className="text-amber-300">drops/1h: {h.ingest.drops1h}</span>
-        </>
-      )}
+      <Link href="/runtime" className="text-[10px] underline-offset-2 opacity-70 hover:underline">
+        System status
+      </Link>
     </div>
   );
 }

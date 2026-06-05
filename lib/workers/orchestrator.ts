@@ -43,6 +43,24 @@ export async function startWorkers() {
   globalThis.__spr_workers_started__ = true;
   globalThis.__spr_worker_stops__ = [];
 
+  const { getSolUsd } = await import("@/lib/market/sol-usd");
+  void getSolUsd().catch(() => undefined);
+  // Keep SOL/USD fresh — mcap math + gates read it synchronously (getSolUsdSync),
+  // so warming only at boot lets the price drift over a long session.
+  const solUsdTimer = setInterval(() => void getSolUsd().catch(() => undefined), 60_000);
+  globalThis.__spr_worker_stops__.push(() => clearInterval(solUsdTimer));
+
+  // Load the UI-selected SIGNAL_MODE override (launch/hybrid/profit) and keep it
+  // fresh, so switching strategy from the frontend takes effect in this worker
+  // within seconds — no .env edit or restart. Falls back to the env default.
+  const { refreshSignalModeOverride } = await import("@/lib/settings/signal-mode");
+  await refreshSignalModeOverride().catch(() => undefined);
+  const signalModeTimer = setInterval(
+    () => void refreshSignalModeOverride().catch(() => undefined),
+    8_000,
+  );
+  globalThis.__spr_worker_stops__.push(() => clearInterval(signalModeTimer));
+
   await ensureInitialState();
   touchOrchestratorBoot();
   const cb = await readState();

@@ -71,9 +71,11 @@ export function TrenchesMarket({
   return (
     <div className={`trenches-wrap ${compact ? "trenches-compact" : ""}`}>
       {!compact && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-lg font-semibold tracking-tight">Trenches</h1>
-          <PumpCoinSearch compact />
+          <div className="w-full min-w-0 sm:max-w-md">
+            <PumpCoinSearch compact />
+          </div>
         </div>
       )}
       {err && <p className="mb-2 text-xs text-bad">{err}</p>}

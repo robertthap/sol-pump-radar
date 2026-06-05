@@ -10,7 +10,7 @@ type Props = {
 /** Consistent header for advanced sidebar tools. */
 export function AdvancedPageShell({ title, description, children, actions }: Props) {
   return (
-    <main className="mx-auto max-w-[1200px] px-4 pb-24">
+    <main className="app-page">
       <section className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl">
           <h1 className="text-xl font-semibold tracking-tight">{title}</h1>

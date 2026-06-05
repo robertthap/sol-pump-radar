@@ -25,7 +25,7 @@ export async function POST(req: Request) {
   const mode = await getUiTradingMode();
   if (mode !== "demo") {
     return NextResponse.json(
-      { error: "not_in_demo_mode", hint: "Switch to Demo mode in the header" },
+      { error: "not_in_demo_mode", hint: "Log off and pick Demo wallet on the home page" },
       { status: 409 },
     );
   }
