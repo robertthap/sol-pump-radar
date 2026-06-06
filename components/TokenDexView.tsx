@@ -1,10 +1,24 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { ExternalDexEmbed } from "@/components/ExternalDexEmbed";
+import { useCallback, useEffect, useState } from "react";
+import {
+  ExternalDexEmbed,
+  type DexTradeHud,
+  type DexTradeMarker,
+} from "@/components/ExternalDexEmbed";
 import { RadarScoresStrip } from "@/components/RadarScoresStrip";
 import { useMintLivePrice } from "@/components/terminal/MintLivePrice";
+import { mcapUsdFromVSol } from "@/lib/dex/curve-mcap";
 import { shortAddr, fmtSol, pumpfunCoin } from "@/lib/ui/format";
+
+type AutoPositionRow = {
+  id: string;
+  mint: string;
+  status: "open" | "closed";
+  entryMcapUsd: number | null;
+  pctOfSize: number | null;
+  markers: { id: string; ts: string; side: "buy" | "sell"; vSol: number | null }[];
+};
 
 export function TokenDexView({ mint, compact }: { mint: string; compact?: boolean }) {
   const sharedPrice = useMintLivePrice();
@@ -12,14 +26,63 @@ export function TokenDexView({ mint, compact }: { mint: string; compact?: boolea
     symbol: null,
     name: null,
   });
+  const [hud, setHud] = useState<DexTradeHud | undefined>();
+  const [tradeMarkers, setTradeMarkers] = useState<DexTradeMarker[] | undefined>();
 
   const onMeta = useCallback((symbol: string | null, name: string | null) => {
     setMeta({ symbol, name });
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    void fetch("/api/auto/positions", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { open?: AutoPositionRow[]; closed?: AutoPositionRow[] } | null) => {
+        if (!alive || !j) return;
+        const p = [...(j.open ?? []), ...(j.closed ?? [])].find((x) => x.mint === mint);
+        if (!p) {
+          setHud(undefined);
+          setTradeMarkers(undefined);
+          return;
+        }
+        setHud({
+          status: p.status,
+          entryMcapUsd: p.entryMcapUsd,
+          pnlPct: p.pctOfSize,
+        });
+        setTradeMarkers(
+          p.markers.map((m) => ({
+            id: m.id,
+            side: m.side,
+            ts: m.ts,
+            vSol: m.vSol,
+            mcapUsd: m.vSol != null ? mcapUsdFromVSol(m.vSol) : null,
+          })),
+        );
+      })
+      .catch(() => {
+        if (alive) {
+          setHud(undefined);
+          setTradeMarkers(undefined);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [mint]);
+
   const symbol =
     meta.symbol ?? sharedPrice?.symbol ?? shortAddr(mint, 4, 4);
   const displayVSol = sharedPrice?.vSol ?? null;
+  const embed = (
+    <ExternalDexEmbed
+      mint={mint}
+      compact={compact}
+      hud={hud}
+      tradeMarkers={tradeMarkers}
+      showTradeBadges={Boolean(tradeMarkers?.length)}
+    />
+  );
 
   if (compact) {
     return (
@@ -41,7 +104,7 @@ export function TokenDexView({ mint, compact }: { mint: string; compact?: boolea
             </a>
           </div>
         </header>
-        <ExternalDexEmbed mint={mint} compact />
+        {embed}
         <RadarScoresStrip mint={mint} compact onMeta={onMeta} />
       </section>
     );
@@ -70,7 +133,7 @@ export function TokenDexView({ mint, compact }: { mint: string; compact?: boolea
           </a>
         </div>
       </header>
-      <ExternalDexEmbed mint={mint} />
+      {embed}
       <RadarScoresStrip mint={mint} onMeta={onMeta} />
     </section>
   );

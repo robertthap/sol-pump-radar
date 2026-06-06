@@ -14,6 +14,22 @@ export const runtime = "nodejs";
 
 const AUTO_TRADER_STALE_MS = 15_000;
 
+// Background workers tick infrequently — don't flag them STALE for ticking slowly.
+// staleLimit = cadence × 2.5 (tolerates a missed run), floored at the global timeout.
+// Workers absent here use the global timeout (correct for the fast loops).
+const WORKER_CADENCE_MS: Record<string, number> = {
+  "missed-winner-scan": 60 * 60_000, // hourly
+  retention: 60 * 60_000, // hourly
+  "chart-aggregator": 2_000,
+  "chart-dex-quotes": 3_000,
+  "chart-reconcile": 30_000,
+};
+
+// These beat once at startup and intentionally never tick again (orchestrator = boot
+// coordinator; continuation-learner = profit-mode stub). Their presence means they
+// booted fine, so never flag them STALE — but they don't count toward worker liveness.
+const BOOT_ONLY = new Set(["orchestrator", "continuation-learner"]);
+
 /**
  * Single endpoint the UI uses to render the runtime health panel.
  * Reads truth from Postgres only — no filesystem, no in-memory state.
@@ -37,13 +53,18 @@ export async function GET() {
     heartbeats = rows.map((r) => {
       const staleMs = now - new Date(r.lastBeat).getTime();
       const isAutoTrader = r.name === "auto-trader";
-      const staleLimit = isAutoTrader ? AUTO_TRADER_STALE_MS : heartbeatTimeoutMs;
+      const cadence = WORKER_CADENCE_MS[r.name];
+      const staleLimit = isAutoTrader
+        ? AUTO_TRADER_STALE_MS
+        : cadence != null
+          ? Math.max(heartbeatTimeoutMs, cadence * 2.5)
+          : heartbeatTimeoutMs;
       return {
         name: r.name,
         lastBeat: r.lastBeat,
         tickMs: r.tickMs,
         staleMs,
-        healthy: staleMs < staleLimit,
+        healthy: BOOT_ONLY.has(r.name) ? true : staleMs < staleLimit,
         critical: isAutoTrader,
       };
     });
@@ -68,7 +89,9 @@ export async function GET() {
     ? now - new Date(ingestMetrics.lastEventAt).getTime()
     : null;
   const ingestStaleSec = lastEventMs != null ? Math.round(lastEventMs / 1000) : null;
-  const workerAlive = heartbeats.some((h) => h.healthy);
+  // Liveness comes from the ticking workers only — a boot-only worker (always "healthy")
+  // must not mask a dead process where every real loop has gone stale.
+  const workerAlive = heartbeats.some((h) => h.healthy && !BOOT_ONLY.has(h.name));
 
   const snapshot = await fetchLatestRuntimeSnapshotPayload();
   const rpc = snapshot?.rpc as
@@ -113,6 +136,10 @@ export async function GET() {
     snapshot,
     snapshotSparkline,
     rpc: rpc ?? null,
+    chart: {
+      wsPort: e.CHART_WS_PORT,
+      wsUrl: e.NEXT_PUBLIC_CHART_WS_URL,
+    },
     now: new Date().toISOString(),
   });
 }

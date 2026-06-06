@@ -44,6 +44,7 @@
     "@spr/trading": "workspace:*",
     "bs58": "^6.0.0",
     "drizzle-orm": "^0.36.4",
+    "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.16.0",
     "next": "^15.0.3",
     "pg": "^8.13.1",
@@ -51,7 +52,8 @@
     "react-dom": "^19.0.0",
     "server-only": "^0.0.1",
     "ws": "^8.20.1",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",

@@ -5,6 +5,7 @@ import { WsLogsSubscriber } from "@/lib/rpc/ws-manager";
 import { parseProgramLogs, type ParsedPumpEvent, type ParsedCreateEvent } from "@/lib/pump/parser";
 import { PUMP_BONDING_CURVE_PROGRAM } from "@/lib/pump/program";
 import { insertEvents } from "@/lib/db/repos/events";
+import { ingestChartEventsFromBatch } from "@/lib/chart/data/ingestBridge";
 import { upsertNewTokens } from "@/lib/db/repos/tokens";
 import { processLaunchHotPipeline } from "@/lib/intelligence/launch-hot";
 import { emitBusEvent } from "@/lib/arch/event-bus";
@@ -46,6 +47,9 @@ export async function startIngestor() {
       // Core ingest truth first — audit/launch paths must not block event inserts.
       const inserted = await insertEvents(batch);
       stats.eventsInserted += inserted;
+      await ingestChartEventsFromBatch(batch).catch((e) =>
+        log.warn("chart ingest push failed", { err: String(e) }),
+      );
 
       const creates = batch.filter((e): e is ParsedCreateEvent => e.kind === "create");
       if (creates.length) {

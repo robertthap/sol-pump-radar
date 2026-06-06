@@ -61,6 +61,14 @@ export async function startWorkers() {
   );
   globalThis.__spr_worker_stops__.push(() => clearInterval(signalModeTimer));
 
+  // Fresh-start: clear the persisted UI wallet selection so a (re)started system begins
+  // LOGGED OUT — the user picks Demo/Real again on the home page. Pairs with the
+  // auto-trader retiring any active session on boot, so nothing trades (and no browse
+  // page acts as a logged-in demo) until the user explicitly chooses. Safe default,
+  // and important for live. Only an explicit pick (setMode) re-establishes the mode.
+  const { clearUiTradingMode } = await import("@/lib/db/repos/trading-mode");
+  await clearUiTradingMode().catch(() => undefined);
+
   await ensureInitialState();
   touchOrchestratorBoot();
   const cb = await readState();

@@ -125,6 +125,10 @@ const EnvSchema = z.object({
   CONFIG_STRICT_MODE: z.enum(["on", "off"]).default("off"),
   LEGACY_TRADER: z.enum(["on", "off"]).default("off"),
   RUNTIME_SNAPSHOT_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(7),
+  /** Chart WebSocket server port (worker process). */
+  CHART_WS_PORT: z.coerce.number().int().min(1024).max(65535).default(8788),
+  /** Browser chart WS URL (defaults to localhost worker). */
+  NEXT_PUBLIC_CHART_WS_URL: z.string().default("ws://127.0.0.1:8788/chart"),
 });
 
 type Env = z.infer<typeof EnvSchema>;

@@ -6,7 +6,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import Link from "next/link";
 
-import { TradeMarkerChart, type ChartMarker } from "@/components/TradeMarkerChart";
+import { TradingChart } from "@/components/chart/TradingChart";
+import type { UserTrade } from "@/lib/chart/types";
 
 import { useTradePage } from "@/components/trade/TradePageProvider";
 
@@ -376,27 +377,6 @@ function PositionsBox({
 
 
 
-function dexMarkersForPosition(p: AutoPosition): ChartMarker[] {
-
-  return p.markers.map((m) => ({
-
-    id: m.id,
-
-    side: m.side,
-
-    ts: m.ts,
-
-    vSol: m.vSol,
-
-    sizeSol: m.side === "buy" ? p.sizeSol : null,
-
-    mcapUsd: m.side === "buy" ? p.entryMcapUsd : p.currentMcapUsd,
-
-  }));
-
-}
-
-
 
 function PositionChartPanel({
 
@@ -408,6 +388,8 @@ function PositionChartPanel({
 
   onClose,
 
+  scrollToBuy,
+
 }: {
 
   p: AutoPosition;
@@ -418,11 +400,27 @@ function PositionChartPanel({
 
   onClose: () => void;
 
+  scrollToBuy?: boolean;
+
 }) {
 
   const label = p.symbol ?? shortAddr(p.mint, 4, 4);
+  const [userTrades, setUserTrades] = useState<UserTrade[] | undefined>();
 
-  const entryChips = dexMarkersForPosition(p);
+  useEffect(() => {
+    let alive = true;
+    void fetch(`/api/tokens/${encodeURIComponent(p.mint)}/user-trades`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { trades: [] }))
+      .then((j: { trades: UserTrade[] }) => {
+        if (alive) setUserTrades(j.trades ?? []);
+      })
+      .catch(() => {
+        if (alive) setUserTrades([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [p.mint, p.markers.length]);
 
   return (
 
@@ -508,13 +506,13 @@ function PositionChartPanel({
 
       <div className="space-y-2 px-3 pb-3">
 
-        <TradeMarkerChart
+        <TradingChart
           mint={p.mint}
-          markers={entryChips}
-          currentMcapUsd={p.currentMcapUsd}
           entryMcapUsd={p.entryMcapUsd}
           pnlPct={p.pctOfSize}
           status={p.status}
+          userTrades={userTrades}
+          scrollToBuy={scrollToBuy}
         />
 
       </div>
@@ -1058,6 +1056,8 @@ export function AutoTradePositions() {
                 key={selected.id}
 
                 p={selected}
+
+                scrollToBuy={focusMint === selected.mint}
 
                 onSell={() => void sellPosition(selected)}
 

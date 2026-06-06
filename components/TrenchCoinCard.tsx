@@ -7,6 +7,17 @@ import { flagClass } from "@/lib/market/flags";
 import { tierClass } from "@/lib/signals/quality";
 import type { MarketCoin, MarketCoinAnalysis } from "@/lib/market/types";
 import { submitDemoTrade } from "@/lib/trade-client";
+
+/** Normalize coin image URIs to a reliable IPFS gateway. cf-ipfs.com / cloudflare-ipfs.com
+ *  no longer resolve (ERR_NAME_NOT_RESOLVED); rewrite them + ipfs:// to ipfs.io. */
+function normalizeImg(uri: string | null): string | undefined {
+  if (!uri) return undefined;
+  const u = uri.trim();
+  const cid = u.startsWith("ipfs://") ? u.slice("ipfs://".length) : null;
+  if (cid) return `https://ipfs.io/ipfs/${cid}`;
+  return u.replace(/https?:\/\/(?:cf-ipfs\.com|cloudflare-ipfs\.com)\/ipfs\//, "https://ipfs.io/ipfs/");
+}
+
 export type TrenchCoin = {
   mint: string;
   name: string | null;
@@ -82,8 +93,9 @@ export function TrenchCoinCard({
   active?: boolean;
   showAnalysis?: boolean;
 }) {  const router = useRouter();
-  const { mode } = useTradingMode();
+  const { mode, needsSelection } = useTradingMode();
   const [busy, setBusy] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
 
   function openCoin() {
     if (onSelectMint) onSelectMint(coin.mint, coin.vSol);
@@ -93,6 +105,12 @@ export function TrenchCoinCard({
   async function quickBuy(e: React.MouseEvent) {
     e.stopPropagation();
     if (busy) return;
+    if (needsSelection || (mode !== "demo" && mode !== "real")) {
+      // No wallet chosen this session — don't silently trade the demo account from a
+      // browse view; send to the wallet chooser first.
+      router.push("/");
+      return;
+    }
     setBusy(true);
     try {
       if (mode === "demo") {
@@ -141,9 +159,14 @@ export function TrenchCoinCard({
       )}
       <div className="trench-card-top">
         <div className="trench-thumb">
-          {coin.imageUri ? (
+          {coin.imageUri && !imgFailed ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={coin.imageUri} alt="" className="h-full w-full object-cover" />
+            <img
+              src={normalizeImg(coin.imageUri)}
+              alt=""
+              className="h-full w-full object-cover"
+              onError={() => setImgFailed(true)}
+            />
           ) : (
             <span className="text-lg opacity-40">{symbol.slice(0, 1)}</span>
           )}

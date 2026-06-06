@@ -294,7 +294,10 @@ export async function fetchBuyerProfilesForMint(mint: string, limitMin = 5) {
       FROM events
       WHERE mint = ${mint}
         AND kind = 'buy'
-        AND ts >= now() - interval '${sql.raw(String(limitMin))} minutes'
+        -- Anchor the window to the latest event, NOT wall-clock now(): the host
+        -- clock jumps forward after the machine sleeps, which would silently empty
+        -- a now()-based window (all events look "old") and kill smart-money signals.
+        AND ts >= (SELECT ts FROM events ORDER BY id DESC LIMIT 1) - interval '${sql.raw(String(limitMin))} minutes'
     )
     SELECT rb.wallet,
       wp.t_stat, wp.avg_return, wp.std_return, wp.trade_count,
@@ -410,7 +413,8 @@ export async function fetchSmartMoneyBuyersForMint(
       WHERE mint = ${mint}
         AND kind = 'buy'
         AND wallet IS NOT NULL
-        AND ts >= now() - interval '5 minutes'
+        -- data-clock anchor (clock-jump robust); see fetchBuyerProfilesForMint.
+        AND ts >= (SELECT ts FROM events ORDER BY id DESC LIMIT 1) - interval '5 minutes'
       GROUP BY wallet
     )
     SELECT rb.wallet,
@@ -457,7 +461,8 @@ export async function fetchManySmartMoneyCounts(
       WHERE mint = ANY(${sql.raw(`ARRAY[${arr}]::varchar[]`)})
         AND kind = 'buy'
         AND wallet IS NOT NULL
-        AND ts >= now() - interval '5 minutes'
+        -- data-clock anchor (clock-jump robust); see fetchBuyerProfilesForMint.
+        AND ts >= (SELECT ts FROM events ORDER BY id DESC LIMIT 1) - interval '5 minutes'
       GROUP BY mint, wallet
     )
     SELECT rb.mint, COUNT(*)::int AS n

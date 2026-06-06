@@ -160,6 +160,22 @@ export async function startAutoTrader() {
   let entryCooldownUntil = 0;
   const ENTRY_COOLDOWN_MS = 5 * 60_000;
 
+  // Fresh-start safety: never resume auto-trading just because a session was left
+  // 'active' before this worker (re)started. Retire it so the bot stays OFF until the
+  // user explicitly presses Start (this also clears the home "session running" prompt,
+  // since that reflects an active session). Safe direction — and essential for live.
+  try {
+    const prior = await getActiveSession();
+    if (prior) {
+      await stopSession("worker_restart");
+      log.info("retired session left active before restart — auto-trade off until Start", {
+        mode: prior.mode,
+      });
+    }
+  } catch (e) {
+    log.warn("boot session-retire failed", { err: String(e) });
+  }
+
   async function tick() {
     if (running) return;
     running = true;

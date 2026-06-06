@@ -24,11 +24,13 @@ pnpm db:migrate
 # terminal 1 — UI/API (read mostly; no workers)
 pnpm dev
 
-# terminal 2 — single automation runtime (ingest + intelligence + trading)
+# terminal 2 — single automation runtime (ingest + intelligence + trading + chart WS)
 pnpm worker
 ```
 
 Open http://127.0.0.1:3000.
+
+**Charts:** Live OHLC updates stream over WebSocket from the worker (`CHART_WS_PORT`, default `8788`). Set `NEXT_PUBLIC_CHART_WS_URL` if the browser is not on the same host as the worker. Historical candles load via REST either way.
 
 ## Layout
 

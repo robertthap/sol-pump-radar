@@ -87,35 +87,29 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // Optimistically reflect the last-chosen wallet for an instant first paint. The
+    // SERVER is authoritative — refresh() reconciles right after and logs out if the
+    // server has no mode (e.g. after a worker restart clears it). We intentionally do
+    // NOT re-push a stored mode to the server here; only an explicit pick (setMode)
+    // establishes a session, so a restarted system starts logged out.
     const stored = readStoredMode();
     if (!stored) return;
     setModeState(stored);
     setNeedsSelection(false);
-    if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(MODE_SYNC_KEY) === "1") {
-      return;
-    }
-    if (typeof sessionStorage !== "undefined") {
-      sessionStorage.setItem(MODE_SYNC_KEY, "1");
-    }
-    void fetch("/api/settings/mode", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ mode: stored }),
-    }).catch(() => undefined);
   }, []);
 
   const applyModePayload = useCallback((j: ModeLitePayload) => {
-    const resolved =
-      j.mode ??
-      (typeof localStorage !== "undefined"
-        ? (localStorage.getItem(LS_KEY) as UiTradingMode | null)
-        : null);
-    if (resolved === "demo" || resolved === "real") {
-      setModeState(resolved);
+    // Server is authoritative. Do NOT resurrect a stale localStorage mode when the
+    // server reports none — clear it so the user is genuinely logged out (e.g. after a
+    // worker restart) and must pick a wallet again. Mirror the server into localStorage.
+    if (j.mode === "demo" || j.mode === "real") {
+      setModeState(j.mode);
       setNeedsSelection(false);
+      if (typeof localStorage !== "undefined") localStorage.setItem(LS_KEY, j.mode);
     } else {
       setModeState(null);
       setNeedsSelection(j.needsSelection);
+      if (typeof localStorage !== "undefined") localStorage.removeItem(LS_KEY);
     }
     setActiveSession(j.activeSession ?? false);
     setDemo(j.demo);

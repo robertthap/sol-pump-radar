@@ -37,7 +37,9 @@ async function detectMintFlagsBatch() {
     FROM events c
     WHERE c.kind = 'create'
       AND c.mint IS NOT NULL
-      AND c.ts >= now() - interval '6 hours'
+      -- data-clock anchor: creates near the latest event, not wall-clock now() (the
+      -- host clock jumps after sleep, which would exclude all pre-sleep mints).
+      AND c.ts >= (SELECT ts FROM events ORDER BY id DESC LIMIT 1) - interval '6 hours'
       AND NOT EXISTS (
         SELECT 1 FROM mint_bot_flags f
         WHERE f.mint = c.mint
@@ -208,7 +210,9 @@ async function refreshWalletProfilesBatch() {
     LEFT JOIN wallet_profiles wp ON wp.wallet = e.wallet
     WHERE e.wallet IS NOT NULL
       AND e.kind IN ('buy','sell')
-      AND e.ts >= now() - interval '1 hour'
+      -- data-clock anchor (clock-jump robust): wallets active near the latest event.
+      -- last_updated stays on now() — it tracks when WE last refreshed, not data recency.
+      AND e.ts >= (SELECT ts FROM events ORDER BY id DESC LIMIT 1) - interval '1 hour'
       AND (wp.last_updated IS NULL OR wp.last_updated < now() - interval '10 minutes')
     GROUP BY e.wallet
     ORDER BY MAX(e.ts) DESC

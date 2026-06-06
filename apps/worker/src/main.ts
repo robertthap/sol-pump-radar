@@ -16,6 +16,11 @@ import { startDemoResetListener } from "@/lib/workers/demo-reset-listener";
 import { startWebCommandListener } from "@/lib/workers/web-command-listener";
 import { startPhantomLiveListener } from "@/lib/workers/phantom-live-listener";
 import { startRuntimeSnapshotWriter } from "@/lib/runtime/runtime-snapshot";
+import { startChartWsServer } from "@/lib/chart/runtime/chartWsServer";
+import { startChartAggregatorLane } from "@/lib/workers/chart-aggregator-lane";
+import { startChartDexQuoteLane } from "@/lib/workers/chart-dex-quote-lane";
+import { startChartReconcileLane } from "@/lib/workers/chart-reconcile-lane";
+import { startChartGraduationLane } from "@/lib/workers/chart-graduation-lane";
 import { bootWorkerWallet } from "@/lib/wallet/worker-vault";
 import { acquireWorkerSingleton, releaseWorkerSingleton } from "@/lib/runtime/worker-lock";
 import { readState } from "@/lib/circuit-breaker/state";
@@ -107,6 +112,13 @@ async function main() {
 
   console.log("[worker] starting runtime snapshot writer…");
   stops.push(startRuntimeSnapshotWriter());
+
+  console.log("[worker] starting chart ws + lanes…");
+  stops.push(startChartWsServer());
+  stops.push(startChartAggregatorLane());
+  stops.push(startChartDexQuoteLane());
+  stops.push(startChartReconcileLane());
+  stops.push(startChartGraduationLane());
 
   console.log("[worker] running — Ctrl+C to stop");
 
