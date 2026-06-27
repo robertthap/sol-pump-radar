@@ -26,10 +26,35 @@ function solUsd(): number {
   return getSolUsdSync();
 }
 
+/**
+ * Pure core: market cap (USD) from vSol at an EXPLICIT SOL/USD rate. Separated so
+ * the pricing seam and its invariant tests can prove SOL-price behavior without
+ * touching the process-global price cache. The exported wrapper below binds the
+ * live rate.
+ */
+export function mcapUsdFromVSolAt(vSol: number, solUsdRate: number): number | null {
+  if (!Number.isFinite(vSol) || vSol <= 0 || !Number.isFinite(solUsdRate) || solUsdRate <= 0) {
+    return null;
+  }
+  return ((vSol * vSol) / CURVE_DIV) * solUsdRate;
+}
+
+/**
+ * Pure core: effective vSol from a USD market cap at an EXPLICIT SOL/USD rate.
+ * Exact inverse of {@link mcapUsdFromVSolAt} at any fixed rate (round-trip identity).
+ */
+export function effectiveVSolFromMcapUsdAt(
+  mcapUsd: number | null | undefined,
+  solUsdRate: number,
+): number | null {
+  if (mcapUsd == null || !Number.isFinite(mcapUsd) || mcapUsd <= 0) return null;
+  if (!Number.isFinite(solUsdRate) || solUsdRate <= 0) return null;
+  return Math.sqrt((mcapUsd * CURVE_DIV) / solUsdRate);
+}
+
 /** Market cap (USD) implied by a bonding-curve virtual_sol_reserves value. */
 export function mcapUsdFromVSol(vSol: number): number | null {
-  if (!Number.isFinite(vSol) || vSol <= 0) return null;
-  return ((vSol * vSol) / CURVE_DIV) * solUsd();
+  return mcapUsdFromVSolAt(vSol, solUsd());
 }
 
 /**
@@ -37,6 +62,5 @@ export function mcapUsdFromVSol(vSol: number): number | null {
  * Used to feed live DEX mcap into the vSol-based PnL model for graduated coins.
  */
 export function effectiveVSolFromMcapUsd(mcapUsd: number | null | undefined): number | null {
-  if (mcapUsd == null || !Number.isFinite(mcapUsd) || mcapUsd <= 0) return null;
-  return Math.sqrt((mcapUsd * CURVE_DIV) / solUsd());
+  return effectiveVSolFromMcapUsdAt(mcapUsd, solUsd());
 }

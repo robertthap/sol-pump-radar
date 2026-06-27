@@ -4,6 +4,8 @@ import WebSocket, { WebSocketServer } from "ws";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/log";
 import type { ChartTimeframe } from "@/lib/chart/types";
+import { parseChartTimeframe } from "@/lib/chart/timeframes";
+import { DEFAULT_CHART_TF } from "@/lib/chart/constants";
 import type { WsEnvelope } from "@/lib/chart/realtime/eventRouter";
 import { envelope } from "@/lib/chart/realtime/eventRouter";
 import {
@@ -38,6 +40,36 @@ export function broadcastChart(mint: string, msg: WsEnvelope): void {
   }
 }
 
+/**
+ * Push a fresh GeckoTerminal-backed snapshot to every connected DEX chart.
+ * Bonding-curve charts update via the trade stream (COMMIT_BUNDLE); graduated
+ * DEX charts have no on-chain trade events, so they refresh from a periodic
+ * snapshot rebuild instead. Built once per unique (mint, tf) and sent only to
+ * clients on that exact timeframe so the candle merge stays correct.
+ */
+export async function refreshDexSnapshots(): Promise<void> {
+  const pairs = new Map<string, { mint: string; tf: ChartTimeframe }>();
+  for (const c of clients) {
+    if (c.ws.readyState !== WebSocket.OPEN) continue;
+    pairs.set(`${c.mint}:${c.tf}`, { mint: c.mint, tf: c.tf });
+  }
+
+  for (const { mint, tf } of pairs.values()) {
+    try {
+      const snap = await buildSyncSnapshot(mint, tf);
+      if (snap.regime !== "dex") continue; // curve charts use the trade stream
+      const raw = JSON.stringify(
+        envelope("SYNC_SNAPSHOT", { mint, epoch: snap.epoch, seq: 0, lastTradeId: snap.lastTradeId }, snap),
+      );
+      for (const c of clients) {
+        if (c.mint === mint && c.tf === tf && c.ws.readyState === WebSocket.OPEN) c.ws.send(raw);
+      }
+    } catch {
+      /* skip this pair on error */
+    }
+  }
+}
+
 export function startChartWsServer(): () => void {
   initChartRuntime({ onBroadcast: broadcastChart });
 
@@ -48,7 +80,7 @@ export function startChartWsServer(): () => void {
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url ?? "/chart", "http://127.0.0.1");
     const mint = url.searchParams.get("mint") ?? "";
-    const tf = (url.searchParams.get("tf") ?? "1m") as ChartTimeframe;
+    const tf = parseChartTimeframe(url.searchParams.get("tf") ?? DEFAULT_CHART_TF);
     if (!mint || mint.length < 32) {
       ws.close(1008, "invalid mint");
       return;

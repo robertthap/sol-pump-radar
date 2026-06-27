@@ -27,6 +27,12 @@ export const events = pgTable(
     tokenAmount: doublePrecision("token_amount"),
     vSolAfter: doublePrecision("v_sol_after"),
     program: varchar("program", { length: 64 }),
+    // T1.2 — trading venue. 'curve' (bonding curve, the default for all prior
+    // rows) or 'pumpswap' (post-graduation DEX). Curve-only consumers (M1
+    // graduation math) filter venue='curve'; wallet history + labels span both.
+    venue: varchar("venue", { length: 16 }).notNull().default("curve"),
+    // T1.2 — PumpSwap pool/pair address (null for curve events).
+    pool: varchar("pool", { length: 64 }),
     raw: jsonb("raw"),
   },
   (t) => ({
@@ -35,6 +41,8 @@ export const events = pgTable(
     walletTs: index("events_wallet_ts_idx").on(t.wallet, t.ts),
     slot: index("events_slot_idx").on(t.slot),
     kind: index("events_kind_idx").on(t.kind),
+    mintVenueTs: index("events_mint_venue_ts_idx").on(t.mint, t.venue, t.ts),
+    walletVenueTs: index("events_wallet_venue_ts_idx").on(t.wallet, t.venue, t.ts),
   }),
 );
 

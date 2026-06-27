@@ -7,9 +7,16 @@ import {
   getActiveSession,
   type AutoSessionDto,
 } from "@/lib/db/repos/auto-sessions";
-import { countPendingBuyDecisions } from "@/lib/db/repos/paper-trades";
+import {
+  countPendingBuyDecisions,
+  fetchOpenOwnershipCounts,
+} from "@/lib/db/repos/paper-trades";
+import { fetchMeasurementCounts } from "@/lib/db/repos/measurement";
+import { openGapCount } from "@/lib/db/repos/ingest-gaps";
+import { latestDrift } from "@/lib/workers/drift-monitor";
 import { fetchContinuationUniverseStats } from "@/lib/db/repos/continuation-candidates";
 import { getWorkerHeartbeats } from "@/lib/workers/heartbeat";
+import { solUsdFreshness } from "@/lib/market/sol-usd";
 
 export type AutoDiagnostics = {
   workersExpected: boolean;
@@ -37,6 +44,35 @@ export type AutoDiagnostics = {
   entryFilter: "qualifyEntry";
   /** Set when BUY signals exist but Option A produced zero opens in 30m. */
   p22WarnOptionB: boolean;
+  /** Phase 0 / issue #11 — explicit OPEN-position ownership vs the global cap. */
+  openPositions: {
+    total: number;
+    ownedByActive: number;
+    /** OPEN positions held by a STOPPED session — silently consume the global cap. */
+    orphaned: number;
+    untagged: number;
+    globalCap: number;
+  };
+  /** Phase 0 / issue #4 — SOL/USD source health (a stale/fallback rate skews mcap). */
+  solPrice: {
+    usd: number;
+    ageMs: number | null;
+    fresh: boolean;
+    usingFallback: boolean;
+  };
+  /** Phase 1 — measurement-backbone progress (watch this accumulate during the Phase 2 run). */
+  measurement: {
+    snapshotsUniverse: number;
+    snapshotsControl: number;
+    labelsComplete: number;
+    labelsPending: number;
+  };
+  /** T1.1 — count of unrecovered WS coverage gaps. > 0 means some labels are
+   *  currently blocked and the ingestor's recovery hasn't drained the queue.
+   *  Persistent > 0 is a red flag (Helius issues / RPC budget exhaustion). */
+  ingestGapsOpen: number;
+  /** T1.3 — latest drift/meta-shift reading (null until the monitor has data). */
+  drift: { maxPsi: number; metaShift: boolean; computedAt: string } | null;
 };
 
 export async function buildAutoDiagnostics(): Promise<AutoDiagnostics> {
@@ -81,8 +117,25 @@ export async function buildAutoDiagnostics(): Promise<AutoDiagnostics> {
     skipRes as unknown as { rows: Array<{ reason: string; n: number }> }
   ).rows.map((r) => ({ reason: r.reason, count: r.n }));
 
+  const ownership = await fetchOpenOwnershipCounts(session?.id ?? null);
+  const globalCap = e.PAPER_MAX_OPEN_POSITIONS;
+  const sol = solUsdFreshness();
+  const measurement = await fetchMeasurementCounts().catch(() => ({
+    snapshotsUniverse: 0,
+    snapshotsControl: 0,
+    labelsComplete: 0,
+    labelsPending: 0,
+  }));
+  const ingestGapsOpen = await openGapCount().catch(() => 0);
+  const drift = await latestDrift().catch(() => null);
+
   let hint: string | null = null;
-  if (session && (session.stats.tradesOpened ?? 0) === 0) {
+  // Issue #11 — orphaned OPEN positions from stopped sessions can starve the
+  // global concurrency cap even when the active session looks idle.
+  if (ownership.orphaned > 0 && ownership.total >= globalCap) {
+    hint = `${ownership.orphaned} OPEN position(s) from a stopped session are holding the global cap (${ownership.total}/${globalCap}). They free at max-hold; reset paper to clear immediately.`;
+  }
+  if (hint == null && session && (session.stats.tradesOpened ?? 0) === 0) {
     if (!workersExpected) {
       hint = "WORKERS=off in .env.local — set WORKERS=on and restart `pnpm dev` so the UI tracks the external worker.";
     } else if (!workersRunning) {
@@ -94,6 +147,19 @@ export async function buildAutoDiagnostics(): Promise<AutoDiagnostics> {
     } else if (session.params.signalStrictness === "strong") {
       hint = 'Session uses signalStrictness "strong" only — restart auto with strong_and_moderate for more trades.';
     }
+  }
+
+  // Phase 1 collection health: the worker is up and emitting BUYs, but the
+  // feature-snapshotter isn't producing universe snapshots → lane crashed or
+  // migration 0020 not applied. Surface it so weeks aren't wasted on no data.
+  if (
+    hint == null &&
+    workersRunning &&
+    (counts?.buy_1h ?? 0) > 0 &&
+    measurement.snapshotsUniverse === 0
+  ) {
+    hint =
+      "Worker is emitting BUY decisions but feature_snapshots is empty — the measurement lanes aren't collecting. Confirm migration 0020 applied and restart `pnpm worker`.";
   }
 
   const opensRes = await getDb().execute(sql`
@@ -137,6 +203,16 @@ export async function buildAutoDiagnostics(): Promise<AutoDiagnostics> {
       !autoDemoRelaxEnabled() &&
       autoPaperOpens30m === 0 &&
       ((counts?.buy_1h ?? 0) > 0 || pendingBuy90s > 0),
+    openPositions: { ...ownership, globalCap },
+    solPrice: {
+      usd: sol.usd,
+      ageMs: Number.isFinite(sol.ageMs) ? sol.ageMs : null,
+      fresh: sol.fresh,
+      usingFallback: sol.usingFallback,
+    },
+    measurement,
+    ingestGapsOpen,
+    drift,
   };
 }
 

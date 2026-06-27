@@ -49,6 +49,12 @@ export function NotificationsPage() {
     if (typeof window === "undefined") return 0;
     return Number(window.localStorage.getItem("spr_notif_seen_at") ?? "0");
   });
+  // "Clear all" hides everything up to this timestamp (the DB notify-log is kept;
+  // newer notifications still appear). Persists per-browser like the seen watermark.
+  const [clearedAt, setClearedAt] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    return Number(window.localStorage.getItem("spr_notif_cleared_at") ?? "0");
+  });
 
   const load = useCallback(async () => {
     try {
@@ -72,8 +78,11 @@ export function NotificationsPage() {
     return ["all", ...Array.from(set).sort()];
   }, [rows]);
 
-  const filtered = rows.filter((r) =>
-    (sev === "all" || r.severity === sev) && (kind === "all" || r.kind === kind),
+  const filtered = rows.filter(
+    (r) =>
+      (sev === "all" || r.severity === sev) &&
+      (kind === "all" || r.kind === kind) &&
+      new Date(r.ts).getTime() > clearedAt,
   );
 
   function markAllRead() {
@@ -81,6 +90,19 @@ export function NotificationsPage() {
     setSeenAt(now);
     if (typeof window !== "undefined") {
       window.localStorage.setItem("spr_notif_seen_at", String(now));
+    }
+  }
+
+  function clearAll() {
+    // Clear everything currently loaded (use the newest ts in case of clock skew),
+    // and also mark read so the header bell badge resets.
+    const newest = rows.reduce((m, r) => Math.max(m, new Date(r.ts).getTime()), 0);
+    const at = Math.max(Date.now(), newest);
+    setClearedAt(at);
+    setSeenAt(at);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("spr_notif_cleared_at", String(at));
+      window.localStorage.setItem("spr_notif_seen_at", String(at));
     }
   }
 
@@ -95,9 +117,20 @@ export function NotificationsPage() {
             Discord (set <code>DISCORD_WEBHOOK_URL</code>).
           </p>
         </div>
-        <button type="button" className="btn btn-ghost text-xs" onClick={markAllRead}>
-          Mark all read
-        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" className="btn btn-ghost text-xs" onClick={markAllRead}>
+            Mark all read
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost text-xs text-muted hover:text-bad"
+            onClick={clearAll}
+            disabled={filtered.length === 0}
+            title="Hide all current notifications (the log is kept; new ones still appear)"
+          >
+            Clear all
+          </button>
+        </div>
       </section>
 
       <section className="card mb-3 flex flex-wrap items-center gap-1 p-2">

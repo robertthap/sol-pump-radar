@@ -279,15 +279,35 @@ export async function fetchAutoSessionPositions(
   const open = positions.filter((p) => p.status === "open");
   const closed = positions.filter((p) => p.status === "closed");
 
+  // True session-wide counts (independent of pagination LIMIT above). The
+  // arrays here are the paginated list for display; counts must reflect the
+  // whole session or the UI shows a wrong "Closed 25" when there are 311.
+  const totals = await getDb().execute(sql`
+    SELECT
+      count(*) FILTER (WHERE status='open')::int   AS open_total,
+      count(*) FILTER (WHERE status='closed')::int AS closed_total,
+      coalesce(sum(pnl_sol::float8) FILTER (WHERE status='closed'), 0)::float8 AS realized_total
+    FROM ${sql.raw(PAPER_TRADES_READ)}
+    WHERE entry_features->>'session_id' = ${sessionId}
+      AND COALESCE(entry_features->>'auto', 'true') = 'true'
+      AND entry_features->>'shadow_of' IS NULL
+  `);
+  const t = (totals as unknown as {
+    rows: Array<{ open_total: number; closed_total: number; realized_total: number }>;
+  }).rows[0] ?? { open_total: 0, closed_total: 0, realized_total: 0 };
+  // Unrealized is summed from the paginated open rows above. The session-wide
+  // total is the realized total + any unrealized on paginated opens. (If a
+  // session ever exceeds the LIMIT in opens, only the paginated ones contribute
+  // unrealized — acceptable since openCount tells the user the true open count.)
   return {
     open,
     closed,
     stats: {
-      openCount: open.length,
-      closedCount: closed.length,
-      realizedPnlSol,
+      openCount: t.open_total,
+      closedCount: t.closed_total,
+      realizedPnlSol: t.realized_total,
       unrealizedPnlSol,
-      totalPnlSol: realizedPnlSol + unrealizedPnlSol,
+      totalPnlSol: t.realized_total + unrealizedPnlSol,
     },
   };
 }

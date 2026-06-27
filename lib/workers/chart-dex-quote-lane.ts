@@ -5,6 +5,7 @@ import { touchWorker } from "@/lib/workers/heartbeat";
 import { DEX_QUOTE_POLL_MS } from "@/lib/chart/constants";
 import { fetchDexMarketBatch } from "@/lib/dex/market-snapshot";
 import { insertDexQuote, fetchDexQuotes } from "@/lib/chart/data/tradeStore";
+import { getChartActiveMints } from "@/lib/chart/data/chartActiveMints";
 import { getChartSubscribedMints } from "@/lib/chart/runtime/chartWsServer";
 import { getChartPipeline } from "@/lib/chart/runtime/chartRuntime";
 import { PUMP_SUPPLY } from "@/lib/chart/constants";
@@ -15,7 +16,7 @@ export function startChartDexQuoteLane(): () => void {
   const tick = async () => {
     const t0 = Date.now();
     try {
-      const mints = getChartSubscribedMints();
+      const mints = [...new Set([...getChartSubscribedMints(), ...getChartActiveMints()])];
       if (!mints.length) return;
       const markets = await fetchDexMarketBatch(mints);
       const pipe = getChartPipeline();

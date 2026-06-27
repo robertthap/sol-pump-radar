@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  anchorTimeForTrade,
   buildMarkers,
   findMarkerAtCrosshair,
   markerId,
@@ -42,6 +43,11 @@ describe("markerEngine", () => {
     const sell = [...markers.values()].find((m) => m.side === "sell");
     assert.ok(sell);
     assert.ok(sell!.pnl != null && sell!.pnl > 0);
+  });
+
+  it("snaps anchor time to candle bucket start", () => {
+    const ts = 1_700_000_005_000; // 5s into a 1m bucket
+    assert.equal(anchorTimeForTrade(ts, "1m"), Math.floor(ts / 60_000) * 60);
   });
 
   it("finds marker at crosshair bucket", () => {

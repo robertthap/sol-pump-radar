@@ -6,6 +6,8 @@ import { logger } from "@/lib/log";
 import { demoWalletTradeSql } from "@/lib/db/repos/trading-mode";
 import { PAPER_TRADES_READ } from "@/lib/db/paper-read";
 import { paperOpen, paperClose } from "@/lib/paper/engine";
+import { isV2SimpleEntry } from "@/lib/env";
+import { ABLATION_THRESHOLDS } from "@/lib/intelligence/ablation-router";
 
 const log = logger("repo:paper");
 
@@ -70,6 +72,61 @@ export async function fetchOpenMintsForSession(sessionId: string): Promise<Set<s
   return new Set(
     (res as unknown as { rows: Array<{ mint: string }> }).rows.map((r) => r.mint),
   );
+}
+
+/**
+ * Explicit OPEN-position ownership accounting (upgrade-plan Phase 0, issue #11).
+ *
+ * The paper ledger and the kernel's global `maxOpenPositions` cap are GLOBAL, but
+ * an auto-session only counts its OWN open positions for capacity. Positions left
+ * OPEN by a stopped session therefore silently consume the global cap until they
+ * hit max-hold. This makes that ownership a single queryable concept so it can be
+ * surfaced (auto diagnostics) and, later, reconciled.
+ *
+ * Ownership key = `entry_features->>'session_id'` (the auto-session id), indexed
+ * by drizzle/0019_paper_positions_session_owner_idx.sql.
+ */
+export type OpenOwnershipCounts = {
+  /** Every OPEN paper position — the basis for the kernel's global cap. */
+  total: number;
+  /** OPEN positions owned by the given (active) auto-session. */
+  ownedByActive: number;
+  /** OPEN positions tagged with a DIFFERENT (stopped) auto-session — the orphans
+   *  that hold the global cap without counting against any live session. */
+  orphaned: number;
+  /** OPEN positions with no auto-session tag (manual / shadow / legacy). */
+  untagged: number;
+};
+
+export async function fetchOpenOwnershipCounts(
+  activeSessionId: string | null,
+): Promise<OpenOwnershipCounts> {
+  const ownedFilter =
+    activeSessionId == null ? sql`false` : sql`entry_features->>'session_id' = ${activeSessionId}`;
+  const orphanFilter =
+    activeSessionId == null ? sql`true` : sql`entry_features->>'session_id' <> ${activeSessionId}`;
+  const res = await getDb().execute(sql`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE ${ownedFilter})::int AS owned_by_active,
+      COUNT(*) FILTER (
+        WHERE entry_features->>'session_id' IS NOT NULL AND ${orphanFilter}
+      )::int AS orphaned,
+      COUNT(*) FILTER (WHERE entry_features->>'session_id' IS NULL)::int AS untagged
+    FROM paper_positions
+    WHERE state = 'OPEN'
+  `);
+  const r = (
+    res as unknown as {
+      rows: Array<{ total: number; owned_by_active: number; orphaned: number; untagged: number }>;
+    }
+  ).rows[0];
+  return {
+    total: r?.total ?? 0,
+    ownedByActive: r?.owned_by_active ?? 0,
+    orphaned: r?.orphaned ?? 0,
+    untagged: r?.untagged ?? 0,
+  };
 }
 
 export async function openPaperPosition(opts: {
@@ -206,6 +263,20 @@ export type AutoTradeQueueOpts = {
 function autoTradeBuyQueueWhereSql(maxAgeSeconds: number, relaxAutoGate: boolean): string {
   const sec = Math.max(1, Math.floor(maxAgeSeconds));
   const age = `ts > now() - interval '${sec} seconds'`;
+  // V2-simple entry (SYSTEM_DESIGN §IV.8): surface the population the validated V2
+  // rule admits — intelligence ≥ floor AND rug < veto — NOT the `_auto_trade_allowed`
+  // (V6) gate, which selects worse than random. Independent of AUTO_DEMO_RELAX; covers
+  // both relax-on (V6-blocked buys land as 'pending') and relax-off ('skipped' blocked).
+  if (isV2SimpleEntry()) {
+    return `action IN ('BUY_STRONG', 'BUY_MODERATE')
+      AND ${age}
+      AND COALESCE((module_scores->>'_intelligence')::float8, 0) >= ${ABLATION_THRESHOLDS.intelFloor}
+      AND COALESCE((module_scores->>'M3_RUG')::float8, 1) < ${ABLATION_THRESHOLDS.rugVeto}
+      AND (
+        executed = 'pending'
+        OR (executed = 'skipped' AND executor_reason = 'auto_trade_blocked')
+      )`;
+  }
   if (!relaxAutoGate) {
     return `action IN ('BUY_STRONG', 'BUY_MODERATE')
       AND executed = 'pending'

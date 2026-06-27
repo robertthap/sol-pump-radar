@@ -2,13 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  ExternalDexEmbed,
-  type DexTradeHud,
-  type DexTradeMarker,
-} from "@/components/ExternalDexEmbed";
+  TokenChart,
+  type TokenChartHud,
+} from "@/components/chart/TokenChart";
 import { RadarScoresStrip } from "@/components/RadarScoresStrip";
 import { useMintLivePrice } from "@/components/terminal/MintLivePrice";
-import { mcapUsdFromVSol } from "@/lib/dex/curve-mcap";
 import { shortAddr, fmtSol, pumpfunCoin } from "@/lib/ui/format";
 
 type AutoPositionRow = {
@@ -16,6 +14,7 @@ type AutoPositionRow = {
   mint: string;
   status: "open" | "closed";
   entryMcapUsd: number | null;
+  currentMcapUsd: number | null;
   pctOfSize: number | null;
   markers: { id: string; ts: string; side: "buy" | "sell"; vSol: number | null }[];
 };
@@ -26,8 +25,7 @@ export function TokenDexView({ mint, compact }: { mint: string; compact?: boolea
     symbol: null,
     name: null,
   });
-  const [hud, setHud] = useState<DexTradeHud | undefined>();
-  const [tradeMarkers, setTradeMarkers] = useState<DexTradeMarker[] | undefined>();
+  const [hud, setHud] = useState<TokenChartHud | undefined>();
 
   const onMeta = useCallback((symbol: string | null, name: string | null) => {
     setMeta({ symbol, name });
@@ -42,29 +40,17 @@ export function TokenDexView({ mint, compact }: { mint: string; compact?: boolea
         const p = [...(j.open ?? []), ...(j.closed ?? [])].find((x) => x.mint === mint);
         if (!p) {
           setHud(undefined);
-          setTradeMarkers(undefined);
           return;
         }
         setHud({
           status: p.status,
           entryMcapUsd: p.entryMcapUsd,
+          currentMcapUsd: p.currentMcapUsd,
           pnlPct: p.pctOfSize,
         });
-        setTradeMarkers(
-          p.markers.map((m) => ({
-            id: m.id,
-            side: m.side,
-            ts: m.ts,
-            vSol: m.vSol,
-            mcapUsd: m.vSol != null ? mcapUsdFromVSol(m.vSol) : null,
-          })),
-        );
       })
       .catch(() => {
-        if (alive) {
-          setHud(undefined);
-          setTradeMarkers(undefined);
-        }
+        if (alive) setHud(undefined);
       });
     return () => {
       alive = false;
@@ -75,13 +61,7 @@ export function TokenDexView({ mint, compact }: { mint: string; compact?: boolea
     meta.symbol ?? sharedPrice?.symbol ?? shortAddr(mint, 4, 4);
   const displayVSol = sharedPrice?.vSol ?? null;
   const embed = (
-    <ExternalDexEmbed
-      mint={mint}
-      compact={compact}
-      hud={hud}
-      tradeMarkers={tradeMarkers}
-      showTradeBadges={Boolean(tradeMarkers?.length)}
-    />
+    <TokenChart mint={mint} symbol={symbol} compact={compact} hud={hud} />
   );
 
   if (compact) {

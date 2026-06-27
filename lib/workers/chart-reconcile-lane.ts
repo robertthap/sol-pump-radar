@@ -4,6 +4,7 @@ import { RECONCILE_INTERVAL_MS, CHECKPOINT_TIME_MS, DEFAULT_CHART_TF, CHECKPOINT
 import { logger } from "@/lib/log";
 import { touchWorker } from "@/lib/workers/heartbeat";
 import { getChartCache, persistEvictedMint, touchChartMint, bumpChartSeq } from "@/lib/chart/runtime/chartRuntime";
+import { getChartActiveMints } from "@/lib/chart/data/chartActiveMints";
 import { getChartSubscribedMints, broadcastChart } from "@/lib/chart/runtime/chartWsServer";
 import { fetchDexQuotes, fetchStreamState, fetchTrades, saveCheckpoint } from "@/lib/chart/data/tradeStore";
 import { buildCommittedBatch, reconcileWindow } from "@/lib/chart/engine/reconcile";
@@ -42,7 +43,7 @@ export function startChartReconcileLane(): () => void {
         await persistEvictedMint(mint);
       }
 
-      const mints = getChartSubscribedMints();
+      const mints = [...new Set([...getChartSubscribedMints(), ...getChartActiveMints()])];
       for (const mint of mints) {
         await touchChartMint(mint);
         const entry = cache.get(mint);

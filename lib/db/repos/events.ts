@@ -133,6 +133,68 @@ export async function insertEvents(batch: ParsedPumpEvent[]): Promise<number> {
   }
 }
 
+/**
+ * T1.2 — insert PumpSwap (post-graduation DEX) swap events. Same `events` table,
+ * tagged venue='pumpswap' + pool set. Dedups on (signature, instruction_index)
+ * like the curve path. `vSolAfter` is the EFFECTIVE vSol (curve-equivalent),
+ * computed by the ingestor from pool reserves + SOL price so PnL/labels stay
+ * continuous across graduation. instructionIndex disambiguates multiple swaps
+ * in one tx.
+ */
+export type SwapEventInsert = {
+  signature: string;
+  instructionIndex: number;
+  slot: bigint;
+  blockTime: number;
+  mint: string;
+  wallet: string;
+  side: "buy" | "sell";
+  solAmount: number;       // in SOL
+  tokenAmount: number;     // whole tokens
+  vSolAfter: number;       // effective vSol
+  pool: string;
+};
+
+export async function insertSwapEvents(batch: SwapEventInsert[]): Promise<number> {
+  if (batch.length === 0) return 0;
+  const rows = batch.map((e) => {
+    const sec = normalizeBlockTimeSec(e.blockTime, Math.floor(Date.now() / 1000));
+    return {
+      signature: e.signature,
+      instructionIndex: e.instructionIndex,
+      slot: e.slot,
+      ts: new Date(sec * 1000),
+      kind: e.side, // 'buy' | 'sell' — user perspective
+      mint: e.mint,
+      wallet: e.wallet,
+      side: e.side,
+      solAmount: e.solAmount,
+      tokenAmount: e.tokenAmount,
+      vSolAfter: e.vSolAfter,
+      program: "pumpswap",
+      venue: "pumpswap" as const,
+      pool: e.pool,
+      raw: null,
+    };
+  });
+  try {
+    await getDb().insert(events).values(rows).onConflictDoNothing();
+    return rows.length;
+  } catch (e) {
+    log.warn("swap batch insert failed; one by one", { err: String(e), n: rows.length });
+    let ok = 0;
+    for (const row of rows) {
+      try {
+        await getDb().insert(events).values(row).onConflictDoNothing();
+        ok++;
+      } catch (err) {
+        log.debug("single swap insert failed", { sig: row.signature, err: String(err) });
+      }
+    }
+    return ok;
+  }
+}
+
 /** API snapshot rows so analytics has price hooks for trending mints without WSS ingest. */
 export async function insertSnapshotEvents(
   rows: Array<{ mint: string; vSol: number }>,

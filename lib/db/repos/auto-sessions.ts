@@ -54,8 +54,12 @@ export const DEFAULT_PARAMS: AutoSessionParams = {
   sizeSol: 0.03,
   takeProfitPct: 0.28,
   stopLossPct: 0.15,
-  maxConcurrent: 3,
-  maxDailyLossSol: 0.3,
+  maxConcurrent: 5,
+  // Paper measurement default: 1.0 SOL/day so a data-collection run isn't cut
+  // short after ~50 trades. It's paper money; you want the sample size. Lower it
+  // (or set per-session) once you go live. Restarting a session also resets the
+  // per-session daily counter.
+  maxDailyLossSol: 1.0,
   signalStrictness: "strong_and_moderate",
   useLearnedAvoids: false,
   maxHoldMinutes: 45,

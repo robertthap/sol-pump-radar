@@ -292,7 +292,11 @@ export async function closePosition(
   const valueRatio = curveValueRatio(row.entry_price, slip.fillPrice);
   const grossOut = row.notional_sol * valueRatio;
   const exitFee = applyFee(grossOut, config.feeBps, config.enableFees);
-  const cashIn = grossOut - exitFee;
+  // Priority-fee drag (A2): the entry leg was NOT charged at open, so charge the
+  // round trip (entry + exit) here against realized PnL + balance. Paper otherwise
+  // ignores this real on-chain cost and reads optimistically high.
+  const priorityRoundTripSol = config.enableFees ? config.priorityFeeSol * 2 : 0;
+  const cashIn = grossOut - exitFee - priorityRoundTripSol;
   const pnl = cashIn - row.notional_sol;
   const pct = row.notional_sol > 0 ? cashIn / row.notional_sol - 1 : 0;
 
@@ -318,7 +322,7 @@ export async function closePosition(
       `INSERT INTO paper_trade_fills
         (position_id, fill_type, fill_price, quantity, notional_sol, slippage_bps, fee_sol, latency_ms)
        VALUES ($1, 'CLOSE', $2, $3, $4, $5, $6, $7)`,
-      [intent.positionId.toString(), slip.fillPrice, row.quantity, grossOut, slip.slippageBps, exitFee, latencyMs],
+      [intent.positionId.toString(), slip.fillPrice, row.quantity, grossOut, slip.slippageBps, exitFee + priorityRoundTripSol, latencyMs],
     );
 
     const win = pnl > 0 ? 1 : 0;
@@ -434,7 +438,11 @@ export async function partialClosePosition(
   const valueRatio = curveValueRatio(row.entry_price, slip.fillPrice);
   const grossOut = partialNotional * valueRatio;
   const exitFee = applyFee(grossOut, config.feeBps, config.enableFees);
-  const cashIn = grossOut - exitFee;
+  // Priority-fee drag (A2): one on-chain leg for this partial sell. (The entry
+  // leg + final-exit leg are charged at the full close, so a position with one
+  // partial pays 3 legs total = entry + partial-sell + final-sell.)
+  const priorityLegSol = config.enableFees ? config.priorityFeeSol : 0;
+  const cashIn = grossOut - exitFee - priorityLegSol;
   const pnl = cashIn - partialNotional;
 
   return withTx(async (client) => {
@@ -465,7 +473,7 @@ export async function partialClosePosition(
       `INSERT INTO paper_trade_fills
         (position_id, fill_type, fill_price, quantity, notional_sol, slippage_bps, fee_sol, latency_ms)
        VALUES ($1, 'PARTIAL', $2, $3, $4, $5, $6, $7)`,
-      [intent.positionId.toString(), slip.fillPrice, partialQty, grossOut, slip.slippageBps, exitFee, latencyMs],
+      [intent.positionId.toString(), slip.fillPrice, partialQty, grossOut, slip.slippageBps, exitFee + priorityLegSol, latencyMs],
     );
 
     await client.query(

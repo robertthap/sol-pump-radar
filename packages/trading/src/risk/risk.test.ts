@@ -12,6 +12,7 @@ const config: PaperRuntimeConfig = {
   enableFees: true,
   enableLatency: false,
   feeBps: 100,
+  priorityFeeSol: 0.0005,
   baseSlippageBps: 30,
   latencyMinMs: 0,
   latencyMaxMs: 0,

@@ -32,7 +32,7 @@ export async function getSolUsd(): Promise<number> {
   try {
     const r = await fetch(
       "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd,aud",
-      { headers: { accept: "application/json" }, cache: "no-store" },
+      { headers: { accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(5_000) },
     );
     if (r.ok) {
       const j = (await r.json()) as { solana?: { usd?: number; aud?: number } };
@@ -63,6 +63,38 @@ export async function getSolAud(): Promise<number> {
 
 export function solPriceCacheSnapshot(): { usd: number; aud: number; ageMs: number } {
   return { usd: cache.usd, aud: cache.aud, ageMs: cache.at ? Date.now() - cache.at : 0 };
+}
+
+/** Beyond this age the cached SOL price is treated as stale (3× the refresh TTL). */
+export const SOL_USD_STALE_MS = TTL_MS * 3;
+
+export type SolUsdFreshness = {
+  usd: number;
+  ageMs: number;
+  /** False until the first successful (or attempted) fetch — i.e. still the $150 fallback. */
+  everFetched: boolean;
+  /** True when the price is the static fallback, never refreshed in this process. */
+  usingFallback: boolean;
+  /** Safe to use for pricing decisions / training labels. */
+  fresh: boolean;
+};
+
+/**
+ * Source-health for the SOL/USD rate (upgrade-plan Phase 0, issue #4). Callers
+ * that mark trades or build training labels can flag/reject a stale or
+ * never-fetched (fallback) price instead of silently using the wrong value —
+ * the failure mode behind the historical 2.24× mcap mismark.
+ */
+export function solUsdFreshness(): SolUsdFreshness {
+  const everFetched = cache.at > 0;
+  const ageMs = everFetched ? Date.now() - cache.at : Infinity;
+  return {
+    usd: cache.usd,
+    ageMs,
+    everFetched,
+    usingFallback: !everFetched,
+    fresh: everFetched && ageMs < SOL_USD_STALE_MS,
+  };
 }
 
 /** @deprecated Use solPriceCacheSnapshot(). */

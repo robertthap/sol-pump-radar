@@ -118,6 +118,12 @@ const FEATURE_PATHS: Array<{ key: string; path: string; thresholds: number[]; mo
   { key: "feat.gate_wallet_conf", path: "computed", thresholds: [0.3, 0.4, 0.5], mode: "lt" },
   { key: "feat.gate_coin_conf", path: "computed", thresholds: [0.3, 0.4, 0.5], mode: "lt" },
   { key: "feat.gate_timing_conf", path: "computed", thresholds: [0.3, 0.4, 0.5], mode: "lt" },
+  // DexScreener 5m order-flow at entry — the momentum signal for DEX-discovered
+  // coins. Low buy/sell ratio, dying volume, or a falling 5m price tend to precede
+  // losses; the learner mines these to auto-create avoid rules (and win patterns).
+  { key: "feat.dex_buy_sell_ratio", path: "computed", thresholds: [0.5, 0.7, 0.9, 1.0], mode: "lt" },
+  { key: "feat.dex_vol_acceleration", path: "computed", thresholds: [0.3, 0.5, 0.8, 1.0], mode: "lt" },
+  { key: "feat.dex_price_change_m5", path: "computed", thresholds: [-5, 0, 5], mode: "lt" },
   // Kalacheva et al. 2026 early-window features (stored in token_features.extras)
   { key: "feat.creation_trade_delta", path: "(tf.extras->>'creationTradeDeltaSec')::float8", thresholds: [2, 5, 10, 30], mode: "lt" },
   { key: "feat.total_sol_first_5m", path: "(tf.extras->>'totalSolFirst5m')::float8", thresholds: [0.5, 1, 2, 5], mode: "lt" },
@@ -143,6 +149,9 @@ export type DsRow = {
   gwallet: number | null;
   gcoin: number | null;
   gtiming: number | null;
+  dex_bsr: number | null;
+  dex_volacc: number | null;
+  dex_pc5: number | null;
   u5m: number | null;
   t5m: number | null;
   s5m: number | null;
@@ -176,6 +185,9 @@ function featureValue(r: DsRow, key: string): number | null {
     case "feat.gate_wallet_conf": return r.gwallet;
     case "feat.gate_coin_conf": return r.gcoin;
     case "feat.gate_timing_conf": return r.gtiming;
+    case "feat.dex_buy_sell_ratio": return r.dex_bsr;
+    case "feat.dex_vol_acceleration": return r.dex_volacc;
+    case "feat.dex_price_change_m5": return r.dex_pc5;
     case "feat.creation_trade_delta": return r.ctd;
     case "feat.total_sol_first_5m": return r.sol5m;
     case "feat.rsi_5m": return r.rsi5m;
@@ -227,6 +239,9 @@ async function fetchClosedTradeDataset(windowHours: number): Promise<DsRow[]> {
       (a.entry_features->>'gateWalletConf')::float8 AS gwallet,
       (a.entry_features->>'gateCoinConf')::float8 AS gcoin,
       (a.entry_features->>'gateTimingConf')::float8 AS gtiming,
+      (a.entry_features->>'dexBuySellRatio')::float8 AS dex_bsr,
+      (a.entry_features->>'dexVolAcceleration')::float8 AS dex_volacc,
+      (a.entry_features->>'dexPriceChangeM5')::float8 AS dex_pc5,
       tf.unique_buyers_5m AS u5m,
       (COALESCE(tf.buys_5m,0) + COALESCE(tf.sells_5m,0))::int AS t5m,
       tf.sells_5m AS s5m,

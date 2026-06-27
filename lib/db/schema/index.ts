@@ -18,3 +18,6 @@ export * from "./rug-labels";
 export * from "./trend-candidates";
 export * from "./continuation-intelligence";
 export * from "./chart-stream";
+export * from "./measurement";
+export * from "./ingest-gaps";
+export * from "./drift-metrics";

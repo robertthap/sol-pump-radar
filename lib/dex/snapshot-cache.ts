@@ -42,3 +42,13 @@ export function invalidateDexMarketCache(): void {
   cachedMintsKey = "";
   cachedMarkets = new Map();
 }
+
+/**
+ * Age (ms) of the last DexScreener batch fetch, or Infinity if never fetched.
+ * Source-health for issue #4 — lets callers flag a stale snapshot instead of
+ * silently treating cache-lagged data as live (DexScreener REST is itself
+ * cached ~30–60s, so a fetch older than that compounds the lag).
+ */
+export function dexMarketCacheAgeMs(): number {
+  return cachedAt ? Date.now() - cachedAt : Infinity;
+}

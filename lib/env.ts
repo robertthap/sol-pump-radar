@@ -103,6 +103,70 @@ const EnvSchema = z.object({
    * Set e.g. 100000 to keep auto-trade to fresh, pre-/early-graduation coins.
    */
   MAX_ENTRY_MCAP_USD: z.coerce.number().min(0).default(0),
+  /**
+   * Max token AGE (seconds) at entry. The eval data shows entries on coins older
+   * than ~1 min lose heavily (1–5 min bucket ≈ −7.5%) while fresh entries (<60s)
+   * win — late entries buy the top. 0 = disabled (default). Set e.g. 120 to skip
+   * stale entries. Tunable; tighten/loosen as the data refines.
+   */
+  MAX_ENTRY_AGE_SEC: z.coerce.number().int().min(0).default(0),
+  /**
+   * Entry-activity floor (data-driven, refined 2026-06-15 on 320 trades). Require, for
+   * DEX-flow coins, real activity at entry:
+   *   dexBuysM5 >= ENTRY_MIN_DEX_BUYS_M5  OR  a smart-money buyer
+   * No momentum gate: on a 40-mover sample, winners actually had NEGATIVE 5m change
+   * at entry (−0.49% vs +0.62% on duds) — buying coins already pumping = local top.
+   * Combined with MAX_ENTRY_MCAP_USD=60000, the backtest flips session from −0.605
+   * SOL (27% win) to +0.009 SOL (65% win) on 23 trades. Tunable; 0 disables.
+   */
+  ENTRY_MIN_DEX_BUYS_M5: z.coerce.number().min(0).default(40),
+  /**
+   * Genesis-sniper entry path (2026-06-15, validated by 27,493-mint backtest:
+   * 7.7% would fire, of those 50% pumped ≥+20%, 23% ≥+100%, 8% ≥+500% in 5 min).
+   * Parallel entry path that bypasses the DEX-flow filter and targets vSol 18–60
+   * (pre-graduation, age 5–60s) where elite wallets actually win. Default OFF
+   * — opt-in only. Use small size; this is high-variance.
+   */
+  GENESIS_SNIPER: z.enum(["on", "off"]).default("off"),
+  GENESIS_SNIPER_SIZE_SOL: z.coerce.number().min(0).default(0.02),
+  GENESIS_SNIPER_MAX_AGE_SEC: z.coerce.number().int().min(5).max(180).default(60),
+  /**
+   * Genesis exit policy (T3.3, evidence-based 2026-06-21). The exit backtest on
+   * 367 OOS fires showed genesis return is moon-tail-dominated (top-1 trade = 69%
+   * of total) and that laddered TP / trailing stops DESTROY total return by
+   * clipping the tail. So genesis trades use a WIDE catastrophic rug-cut SL only —
+   * NO take-profit, NO trailing stop, NO stagnation cut — and hold to a short
+   * max-hold. This bounds per-trade loss while preserving the moon branch that is
+   * the entire edge. SL is on the vSol basis (−40% vSol ≈ −64% value).
+   */
+  GENESIS_EXIT_SL_PCT: z.coerce.number().min(0).max(1).default(0.40),
+  GENESIS_EXIT_MAX_HOLD_MIN: z.coerce.number().min(0.5).max(60).default(5),
+  /**
+   * PumpSwap (post-graduation DEX) ingestion (T1.2). A second WS subscriber that
+   * captures swaps on the PumpSwap AMM so graduated coins are visible in `events`
+   * (venue='pumpswap'). Default off until verified live; turn on to populate the
+   * post-grad universe the learner + smart-money detector were blind to.
+   */
+  PUMPSWAP_INGEST: z.enum(["on", "off"]).default("off"),
+  /**
+   * Subtractive ablation (T4). The decisive experiment: does any variant clear
+   * the kill-gate, and is the scoring complexity earning its keep? Evaluated
+   * OFFLINE over the recorded feature_snapshots + outcome_labels population (same
+   * snapshots for every variant → no time confound). The live switch is reserved;
+   * default off.
+   */
+  ABLATION_VARIANT: z.enum(["V0", "V1", "V2", "V3", "V4", "V5", "V6", "off"]).default("off"),
+  ABLATION_MODE: z.enum(["offline", "live"]).default("offline"),
+  /**
+   * Live entry mode (acting on the T4 ablation, 2026-06-22).
+   * - v2_simple: enter purely on the validated V2 rule (intelligence ≥ 0.5 AND
+   *   rug < 0.7). Bypasses the soft gates the ablation found harmful (confluence,
+   *   three-gate, graduation floor, order-flow, activity, age); HARD safety vetoes
+   *   ('rugged' label, bundle/mechanical) still apply. Defaults ON because the full
+   *   stack ("full") selects worse than random (SYSTEM_DESIGN §IV.8).
+   * - full: the legacy full-system entry path (set this to revert).
+   */
+  ENTRY_MODE: z.enum(["v2_simple", "full"]).default("v2_simple"),
   /** Override analytics active-mint window (minutes). Defaults by SIGNAL_MODE. */
   ACTIVE_MINT_WINDOW_MINUTES: z.coerce.number().int().min(5).max(720).optional(),
   /** Looser auto-trader entry gates for paper/demo sessions. */
@@ -465,4 +529,9 @@ export function autoContinuationEnabled(): boolean {
 
 export function autoDemoRelaxEnabled(): boolean {
   return env().AUTO_DEMO_RELAX !== "off";
+}
+
+/** T4-ablation-driven live entry: V2 (intelligence + rug veto) vs the full stack. */
+export function isV2SimpleEntry(): boolean {
+  return env().ENTRY_MODE === "v2_simple";
 }

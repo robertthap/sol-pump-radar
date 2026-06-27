@@ -1,0 +1,78 @@
+[
+  {
+    "signature": "23k8VP1tEqHU9hvWta9tXtswxCnhy7YYKm8XRvVpfQ5BZSqhgX2mWDvSPZc1aA8FZfKJTiqydvahtngJos1gSDRL",
+    "eventType": "SellEvent",
+    "slot": 365256073,
+    "blockTime": 1757250631,
+    "programDataB64": "Pi83CqUD3CpHhL1oAAAAAADnIaIEAAAAQEIPAAAAAAAA5yGiBAAAAAAAAAAAAAAAwOHkAAAAAAAAID2IeS0AAD1JhsNwLQAAGQAAAAAAAAAGBPgUHQAAAAUAAAAAAAAANWf+0AUAAAA3RY6uUy0AAALej91NLQAA1dhTdrIlrTdiPYsvcmnbJIGlL/DOHhOKay2vixQCgylgB9DbbVcdhtz/8Dlj0r0tAMKXjFpT7jhq3eumYG4SEmIMKVBMlOc2axlhBz7r6920IUtqeJ7s+t5Lc+9S1vVRCHQiZWhqTn0JTD3DHToP1oyvxcLZBR+tWp46pKsnCUTgBMh865j6XOR/gDgG/Sx5RdKVJJWa7ADe2XgU8494Rn9od0XKANKHSuWCZBHLcTODM187xuBr+Iagv7uOned3AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "poolBaseMint": "So11111111111111111111111111111111111111112",
+    "poolQuoteMint": "Eo3XuppuKP1Q3EJc9RfviEQqeEEhziSY5qPxTnXMPusy",
+    "expected": {
+      "user": "7Ts3yn7mUbaR1YFDkLgPAXQVXB7NSMV1fNFbrnZskayf",
+      "pool": "FPmAFRgcnRXMDhBZJPXRcsLXokHJgmscEwFNVM22Tija",
+      "memeMint": "Eo3XuppuKP1Q3EJc9RfviEQqeEEhziSY5qPxTnXMPusy",
+      "baseIsWsol": true,
+      "userSide": "buy",
+      "solAmount": "19900000000",
+      "tokenAmount": "49962339944765",
+      "solReserveAfter": "15000000"
+    }
+  },
+  {
+    "signature": "5Z3Pm4gSPAuMZYLLwzDiJBgGwXYqA8sMwJfMbvRATyMAjuHeGWTYQpTEgsqTJtDQe6bhJaPP5WaosRT7fT827Ayr",
+    "eventType": "BuyEvent",
+    "slot": 365154461,
+    "blockTime": 1757209866,
+    "programDataB64": "Z/RSHyz1d3cK5bxoAAAAAIfTIaoOAAAAgFw+LmoBAAAAAAAAAAAAALtcXXelKwAAMibzqBoAAABC0EkVjgAAAIzHBrOtAAAAGQAAAAAAAACf5SpvAAAAAAUAAAAAAAAAh8c7FgAAAAArrTEirgAAALJ0bTiuAAAAL6b8XPInBzMcPgh+b10v9JiVdEmv7DZ2dInzo+HodWlgB9DbbVcdhtz/8Dlj0r0tAMKXjFpT7jhq3eumYG4SEmIMKVBMlOc2axlhBz7r6920IUtqeJ7s+t5Lc+9S1vVRLSas3Dk5UUhD7zZUeY+aSpzxXFlub8r4GJPKCybHRMzgBMh865j6XOR/gDgG/Sx5RdKVJJWa7ADe2XgU8494RiE+fPaq2YP6aZQzb9gnXzj3YKtnrqvJE9SUKlV0YWpTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "poolBaseMint": "So11111111111111111111111111111111111111112",
+    "poolQuoteMint": "5Mn3Qg88H6Zt8onehj14j34ekWAd426nPvHiHpDSRKAM",
+    "expected": {
+      "user": "7Ts3yn7mUbaR1YFDkLgPAXQVXB7NSMV1fNFbrnZskayf",
+      "pool": "4D1r1AcLeFgAr7i51F6CjGc3LdGpnJUFQDvKP8fkuXNY",
+      "memeMint": "5Mn3Qg88H6Zt8onehj14j34ekWAd426nPvHiHpDSRKAM",
+      "baseIsWsol": true,
+      "userSide": "sell",
+      "solAmount": "62983885703",
+      "tokenAmount": "746032908172",
+      "solReserveAfter": "114503657010"
+    }
+  },
+  {
+    "signature": "4g2SUFnu5hTG7GWuFvpG4ZgvG6ELncMDu9RJuyxfmheBhpnFe8yMu4RVYftCxTQmLLiQzVkjHk4vnKPwxpdHVzNi",
+    "eventType": "BuyEvent",
+    "slot": 365154419,
+    "blockTime": 1757209849,
+    "programDataB64": "Z/RSHyz1d3f55LxoAAAAAAilE+sEAAAAgEvPkC4AAAAAAAAAAAAAALXM05a8KwAAi/dF8h4AAAB3k9wAegAAAELjwQ0XAAAAGQAAAAAAAADuH8EOAAAAAAUAAAAAAAAAymzzAgAAAAAwA4McFwAAAPpvdh8XAAAAL6b8XPInBzMcPgh+b10v9JiVdEmv7DZ2dInzo+HodWlgB9DbbVcdhtz/8Dlj0r0tAMKXjFpT7jhq3eumYG4SEmIMKVBMlOc2axlhBz7r6920IUtqeJ7s+t5Lc+9S1vVRLSas3Dk5UUhD7zZUeY+aSpzxXFlub8r4GJPKCybHRMzgBMh865j6XOR/gDgG/Sx5RdKVJJWa7ADe2XgU8494RiE+fPaq2YP6aZQzb9gnXzj3YKtnrqvJE9SUKlV0YWpTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "poolBaseMint": "So11111111111111111111111111111111111111112",
+    "poolQuoteMint": "5Mn3Qg88H6Zt8onehj14j34ekWAd426nPvHiHpDSRKAM",
+    "expected": {
+      "user": "7Ts3yn7mUbaR1YFDkLgPAXQVXB7NSMV1fNFbrnZskayf",
+      "pool": "4D1r1AcLeFgAr7i51F6CjGc3LdGpnJUFQDvKP8fkuXNY",
+      "memeMint": "5Mn3Qg88H6Zt8onehj14j34ekWAd426nPvHiHpDSRKAM",
+      "baseIsWsol": true,
+      "userSide": "sell",
+      "solAmount": "21123802376",
+      "tokenAmount": "99015058242",
+      "solReserveAfter": "132913690507"
+    }
+  },
+  {
+    "signature": "2YDPyQPagqzuMte3YjFbHqcWkeWiM3zz9Fnov2kUDqtjqFvpD2XBATsy3bUwg7udfR8hzShguefJhQZuRFrZSgsv",
+    "eventType": "SellEvent",
+    "slot": 365151569,
+    "blockTime": 1757208690,
+    "programDataB64": "Pi83CqUD3Cpy4LxoAAAAAADyBSoBAAAAs7zyvgAAAAAA8gUqAQAAAKQsDdvhKwAAJR9FRTIAAAAn2cEbQgAAADinC38BAAAAGQAAAAAAAAAuJvUAAAAAAAUAAAAAAAAAowcxAAAAAAAKgRZ+AQAAAGd55X0BAAAAL6b8XPInBzMcPgh+b10v9JiVdEmv7DZ2dInzo+HodWlgB9DbbVcdhtz/8Dlj0r0tAMKXjFpT7jhq3eumYG4SEmIMKVBMlOc2axlhBz7r6920IUtqeJ7s+t5Lc+9S1vVRLSas3Dk5UUhD7zZUeY+aSpzxXFlub8r4GJPKCybHRMzgBMh865j6XOR/gDgG/Sx5RdKVJJWa7ADe2XgU8494RiE+fPaq2YP6aZQzb9gnXzj3YKtnrqvJE9SUKlV0YWpTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "poolBaseMint": "So11111111111111111111111111111111111111112",
+    "poolQuoteMint": "5Mn3Qg88H6Zt8onehj14j34ekWAd426nPvHiHpDSRKAM",
+    "expected": {
+      "user": "7Ts3yn7mUbaR1YFDkLgPAXQVXB7NSMV1fNFbrnZskayf",
+      "pool": "4D1r1AcLeFgAr7i51F6CjGc3LdGpnJUFQDvKP8fkuXNY",
+      "memeMint": "5Mn3Qg88H6Zt8onehj14j34ekWAd426nPvHiHpDSRKAM",
+      "baseIsWsol": true,
+      "userSide": "buy",
+      "solAmount": "5000000000",
+      "tokenAmount": "6426437432",
+      "solReserveAfter": "215910522661"
+    }
+  }
+]

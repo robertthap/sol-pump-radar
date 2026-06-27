@@ -5,9 +5,43 @@ import type { MintFlags } from "@/lib/db/repos/bots";
 import { fetchBuyerProfilesForMint } from "@/lib/db/repos/bots";
 import { readActiveGateWeights } from "@/lib/db/repos/tuner";
 import { imitationPenaltyPct } from "@/lib/intel/imitation";
-import { isProfitSignalMode, allowsLaunchTier } from "@/lib/env";
+import { isProfitSignalMode, allowsLaunchTier, isV2SimpleEntry } from "@/lib/env";
 import { launchQualityScore } from "@/lib/intelligence/launch-rank";
 import { relaxedTierEnabled } from "@/lib/trade/tier-control";
+import { variantEnters, ABLATION_THRESHOLDS, type AblationFeatures } from "@/lib/intelligence/ablation-router";
+
+/**
+ * The validated V2 entry rule (T4 ablation, SYSTEM_DESIGN §IV.8): enter purely on
+ * a core-intelligence floor + a hard rug veto. No confluence/three-gate/grad floor —
+ * those are the gates the ablation found actively harmful. Hard safety vetoes
+ * ('rugged' label, bundle/mechanical) are applied upstream in the auto-trader and
+ * still hold. The decision DELEGATES to the pure, tested `variantEnters("V2", …)`
+ * so the live gate is identical-by-construction to what the ablation measured.
+ */
+function qualifyV2Entry(ctx: EntryContext): EntryFilterResult {
+  const ms = ctx.moduleScores ?? {};
+  const intel = ms._intelligence ?? 0;
+  const rug = ms.M3_RUG ?? 0;
+  const feat: AblationFeatures = {
+    intelligence: intel, rug, insider: 0, wash: 0, creator: 0, grad: 0, engineA: 0, autoAllowed: 0,
+  };
+  if (!variantEnters("V2", feat, ctx.mint)) {
+    const reason =
+      intel < ABLATION_THRESHOLDS.intelFloor
+        ? `v2: intelligence ${intel.toFixed(2)} < ${ABLATION_THRESHOLDS.intelFloor}`
+        : `v2: rug ${rug.toFixed(2)} ≥ ${ABLATION_THRESHOLDS.rugVeto} (hard veto)`;
+    return { allow: false, reason, gateConfidence: null, insiderBoost: false };
+  }
+  return {
+    allow: true,
+    reason: `v2 entry (intel ${intel.toFixed(2)}, rug ${rug.toFixed(2)})`,
+    gateConfidence: intel,
+    gateWalletConf: intel,
+    gateCoinConf: intel,
+    gateTimingConf: intel,
+    insiderBoost: false,
+  };
+}
 
 export const CONFLUENCE_MIN: Record<string, number> = {
   BUY_STRONG: 0.56,
@@ -122,6 +156,12 @@ export function passesModuleVetoes(ctx: EntryContext, demoRelaxed = false): Entr
   if (creator >= 0.65 && ctx.action === "BUY_STRONG") {
     return { allow: false, reason: `creator risk ${creator.toFixed(2)}`, gateConfidence: null, insiderBoost: false };
   }
+  // Hard rug ceiling: a near-certain rug is NEVER worth buying — not even with a
+  // strong insider-entry signal. (A rugScore=0.95 token was entered via the insider
+  // exemption below and lost 72%.) This ceiling cannot be bypassed.
+  if (rug >= 0.7) {
+    return { allow: false, reason: `rug score ${rug.toFixed(2)} (hard veto)`, gateConfidence: null, insiderBoost: false };
+  }
   const rugCap = demoRelaxed ? 0.55 : 0.38;
   if (rug >= rugCap && !ctx.insider?.hasStrongInsiderEntry) {
     return { allow: false, reason: `rug score ${rug.toFixed(2)}`, gateConfidence: null, insiderBoost: false };
@@ -171,6 +211,10 @@ export async function qualifyEntry(
   ctx: EntryContext,
   opts?: QualifyEntryOpts,
 ): Promise<EntryFilterResult> {
+  // V2-simple entry mode short-circuits the full gate stack (incl. demo-relax path):
+  // the validated intelligence + rug-veto rule is the entire entry decision.
+  if (isV2SimpleEntry()) return qualifyV2Entry(ctx);
+
   const demoRelaxed = opts?.demoRelaxed ?? false;
   if (demoRelaxed) return qualifyDemoAutoEntry(ctx);
 

@@ -1,5 +1,5 @@
 import "server-only";
-import { sql, desc, eq } from "drizzle-orm";
+import { sql, desc, eq, and } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { tunerChanges } from "@/lib/db/schema";
 
@@ -88,10 +88,28 @@ export async function recordChange(opts: {
   metricsAfter?: Record<string, unknown>;
   applied: boolean;
 }): Promise<string> {
-  const [row] = await getDb()
+  const reason = opts.reason.slice(0, 126);
+  const db = getDb();
+  // Dedupe: the learner runs on a loop and would otherwise re-record an identical
+  // change/note every tick (e.g. the "Stop-loss exits N/M" review note piled up
+  // 7×). Skip if the same reason was already recorded (and not reverted) recently.
+  const dupe = await db
+    .select({ id: tunerChanges.id })
+    .from(tunerChanges)
+    .where(
+      and(
+        eq(tunerChanges.reason, reason),
+        eq(tunerChanges.reverted, "no"),
+        sql`${tunerChanges.ts} > now() - interval '24 hours'`,
+      ),
+    )
+    .limit(1);
+  if (dupe.length) return dupe[0]!.id.toString();
+
+  const [row] = await db
     .insert(tunerChanges)
     .values({
-      reason: opts.reason.slice(0, 126),
+      reason,
       diff: opts.applied ? opts.diff : {},
       metricsBefore: opts.metricsBefore,
       metricsAfter: opts.metricsAfter ?? null,

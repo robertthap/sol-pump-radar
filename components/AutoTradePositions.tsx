@@ -508,7 +508,9 @@ function PositionChartPanel({
 
         <TradingChart
           mint={p.mint}
+          symbol={p.symbol}
           entryMcapUsd={p.entryMcapUsd}
+          currentMcapUsd={p.currentMcapUsd}
           pnlPct={p.pctOfSize}
           status={p.status}
           userTrades={userTrades}

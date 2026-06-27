@@ -1,11 +1,15 @@
 import type { ChartMarkerInstance, ChartTimeframe, UserTrade } from "@/lib/chart/types";
 import { bucketForTrade, buildPositions } from "@/lib/chart/engine/positionBuilder";
-import type { UTCTimestamp } from "lightweight-charts";
 
 const MAX_LANES = 4;
 
 export function markerId(positionId: string, tradeId: string, side: string): string {
   return `${positionId}:${tradeId}:${side}`;
+}
+
+/** Snap trade to candle bucket start (unix seconds) for the active TF. */
+export function anchorTimeForTrade(timestampMs: number, tf: ChartTimeframe): number {
+  return Math.floor(bucketForTrade(timestampMs, tf) / 1000);
 }
 
 export function buildMarkers(fills: UserTrade[], tf: ChartTimeframe): Map<string, ChartMarkerInstance> {
@@ -30,7 +34,7 @@ export function buildMarkers(fills: UserTrade[], tf: ChartTimeframe): Map<string
   const out = new Map<string, ChartMarkerInstance>();
 
   for (const t of flat) {
-    const anchorTime = Math.floor(t.timestamp / 1000);
+    const anchorTime = anchorTimeForTrade(t.timestamp, tf);
     const bucketTime = bucketForTrade(t.timestamp, tf);
     const laneKey = bucketTime;
     const lane = Math.min(laneAtTime.get(laneKey) ?? 0, MAX_LANES - 1);
@@ -65,15 +69,4 @@ export function findMarkerAtCrosshair(
     }
   }
   return best;
-}
-
-export function markersToLwCharts(markers: Map<string, ChartMarkerInstance>) {
-  return [...markers.values()].map((m) => ({
-    id: m.id,
-    time: m.anchorTime as UTCTimestamp,
-    position: m.side === "buy" ? ("belowBar" as const) : ("aboveBar" as const),
-    color: m.side === "buy" ? "#22c55e" : "#ef4444",
-    shape: m.side === "buy" ? ("arrowUp" as const) : ("arrowDown" as const),
-    text: m.side === "buy" ? "B" : "S",
-  }));
 }

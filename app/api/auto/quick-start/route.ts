@@ -11,10 +11,13 @@ export const runtime = "nodejs";
 const PRESETS: Record<string, Partial<AutoSessionParams>> = {
   balanced: {
     sizeSol: 0.03,
-    maxConcurrent: 3,
+    maxConcurrent: 5,
     signalStrictness: "strong_and_moderate",
     takeProfitPct: 0.28,
-    stopLossPct: 0.15,
+    // Tightened 0.15 → 0.12 (2026-06-15, 87-trade session 31 evidence: 24% of
+    // trades hit SL on volatile sub-$60k mcap entries; SL bucket was −0.452 SOL
+    // of the −0.470 total loss. −12% vSol = −22.6% value vs prior −27.75%).
+    stopLossPct: 0.12,
     maxHoldMinutes: 45,
     tp1Pct: 0.15,
     tp1Fraction: 0.5,

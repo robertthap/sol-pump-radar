@@ -355,16 +355,20 @@ export async function startLearner() {
         { trades: relaxed.trades, winRate: relaxed.winRate, expectancySol: relaxed.expectancySol },
       );
       const was = relaxedTierEnabled();
-      setRelaxedTierEnabled(decision.enabled);
-      if (was !== decision.enabled) {
-        log.warn("relaxed tier toggled", {
-          enabled: decision.enabled,
+      // Only ACT on the decision when auto-tuning is on. Disabling the relaxed
+      // tier is a strategy change — during a measurement run (AUTO_TUNE=off) it
+      // must stay enabled, or a losing streak silently self-disables ~70% of
+      // entries and starves the run. We still compute + log what it would do.
+      const applyTier = env().AUTO_TUNE === "on";
+      if (applyTier) setRelaxedTierEnabled(decision.enabled);
+      if (was !== decision.enabled || !applyTier) {
+        log.info("relaxed tier decision", {
+          applied: applyTier,
+          enabled: applyTier ? decision.enabled : relaxedTierEnabled(),
           reason: decision.reason,
           strict: { n: strict.trades, win: strict.winRate, exp: strict.expectancySol },
           relaxed: { n: relaxed.trades, win: relaxed.winRate, exp: relaxed.expectancySol },
         });
-      } else {
-        log.debug("relaxed tier unchanged", { enabled: decision.enabled, reason: decision.reason });
       }
     } catch (e) {
       log.warn("tier tick failed", { err: String(e) });

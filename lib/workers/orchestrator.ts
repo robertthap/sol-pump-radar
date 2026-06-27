@@ -18,6 +18,11 @@ import { startContinuationEventStream } from "./continuation-event-stream";
 import { startMissedWinnerScan } from "./missed-winner-scan";
 import { startContinuationLearner } from "./continuation-learner";
 import { startRetentionWorker } from "./retention";
+import { startFeatureSnapshotter } from "./feature-snapshotter";
+import { startControlSampler } from "./control-sampler";
+import { startLabelBuilder } from "./label-builder";
+import { startPostExitPoller } from "./post-exit-poller";
+import { startDriftMonitor } from "./drift-monitor";
 import { touchOrchestratorBoot } from "./heartbeat";
 import { env } from "@/lib/env";
 
@@ -95,6 +100,18 @@ export async function startWorkers() {
   globalThis.__spr_worker_stops__.push(await startContinuationLearner());
   globalThis.__spr_worker_stops__.push(await startLearner());
   globalThis.__spr_worker_stops__.push(await startNotifier());
+
+  // Phase 1 measurement backbone — point-in-time feature capture + async labels.
+  globalThis.__spr_worker_stops__.push(await startFeatureSnapshotter());
+  globalThis.__spr_worker_stops__.push(await startControlSampler());
+  globalThis.__spr_worker_stops__.push(await startLabelBuilder());
+  // Post-exit poller: pump.fun forward returns for closed positions (5m/30m/1h/6h),
+  // so we see graduated post-exit pumps that `events`/`mint_dex_quotes` miss.
+  globalThis.__spr_worker_stops__.push(startPostExitPoller());
+  // Drift / meta-shift detector (T1.3): PSI of the core feature vector vs the
+  // baseline window → drift_metrics. Makes the kill-gate's meta-shift condition
+  // verifiable.
+  globalThis.__spr_worker_stops__.push(startDriftMonitor());
 
   log.info("workers running");
 }

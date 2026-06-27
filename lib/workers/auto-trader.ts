@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { logger } from "@/lib/log";
-import { env, rpcHttpUrls, activeMintWindowMinutes, autoDemoRelaxEnabled, isLiveAllowed, allowsLaunchTier } from "@/lib/env";
+import { env, rpcHttpUrls, activeMintWindowMinutes, autoDemoRelaxEnabled, isLiveAllowed, allowsLaunchTier, isV2SimpleEntry } from "@/lib/env";
 import { assertLiveExecutionAllowed } from "@/lib/runtime/live-guards";
 import { readState } from "@/lib/circuit-breaker/state";
 import { getDb } from "@/lib/db/client";
@@ -9,6 +9,7 @@ import {
   fetchPendingBuyDecisions,
   fetchTradableAutoFallback,
   markDecisionsSkipped,
+  fetchOpenOwnershipCounts,
   type PendingBuyDecisionDto,
 } from "@/lib/db/repos/paper-trades";
 import {
@@ -24,8 +25,10 @@ import {
   type AutoSessionDto,
 } from "@/lib/db/repos/auto-sessions";
 import { recordOutcome } from "@/lib/db/repos/outcomes";
-import { paperPnlSol } from "@/lib/executor/paper";
-import { pnlFromMcap } from "@/lib/paper/mcap-pnl";
+import { recordPostExitSnapshot } from "@/lib/db/repos/measurement";
+import { evaluateGenesisSnipe } from "@/lib/intelligence/genesis-snipe";
+import { fetchGenesisSnipeCandidates } from "@/lib/db/repos/genesis-signals";
+import { markPnl } from "@/lib/pricing/seam";
 import { riskBudgetFor } from "@/lib/risk/presets";
 import { peekKeypair } from "@/lib/wallet/session";
 import { fetchMintFlags } from "@/lib/db/repos/bots";
@@ -41,9 +44,11 @@ import { fetchDemoAccount, getUiTradingMode } from "@/lib/db/repos/trading-mode"
 import { resolveEntryVSol } from "@/lib/pump/resolve-price";
 import { fetchPumpFunCoin } from "@/lib/pump/fun-api";
 import { mcapUsdFromVSol, effectiveVSolFromMcapUsd } from "@/lib/dex/curve-mcap";
+import { fetchDexMarketBatchCached } from "@/lib/dex/snapshot-cache";
 import { latestVSolBatch } from "@/lib/db/repos/events";
 import { VSOL_MODULE_KEY } from "@/lib/intelligence/scored-mint-adapter";
-import { paperOpen, paperClose, paperPartialClose } from "@/lib/paper/engine";
+import { paperOpen, paperClose, paperPartialClose, getPaperConfig } from "@/lib/paper/engine";
+import { entryHeadroom } from "@/lib/trade/capacity";
 import { decidePaperExit } from "@/lib/paper/exit-decision";
 import { executePaperBuy } from "@/lib/executor/normalizer";
 import {
@@ -61,6 +66,10 @@ import { touchWorker } from "@/lib/workers/heartbeat";
 const log = logger("auto-trader");
 const TICK_MS = 3_000;
 let lastPendingFallbackAt = 0;
+// Throttle the orphaned-cap warning so it doesn't flood every tick while leftover
+// positions from a pre-restart session drain (they self-clear at stagnation/max-hold).
+let lastOrphanWarnAt = 0;
+let lastOrphanCount = -1;
 
 async function resolvePendingBuyQueue(): Promise<PendingBuyDecisionDto[]> {
   const queueOpts = { relaxAutoGate: autoDemoRelaxEnabled() };
@@ -183,7 +192,13 @@ export async function startAutoTrader() {
     touchWorker("auto-trader");
     try {
       const session = await getActiveSession();
-      if (!session) return;
+      if (!session) {
+        // No active session means nobody is managing exits. A session that
+        // stopped (loss-cap / manual / worker-restart) leaves its open positions
+        // dangling forever. Sweep them closed at last mark so they can't get stuck.
+        await sweepOrphanedOpenPositions();
+        return;
+      }
 
       const cb = await readState();
       if (cb.state === "HALTED") {
@@ -213,7 +228,10 @@ export async function startAutoTrader() {
 
       // === Kill-switch: pause entries on a consecutive-loss streak (L6.1) ===
       const consecLosses = await recentConsecutiveLosses(session);
-      const maxConsec = session.mode === "live" ? env().LIVE_MAX_CONSECUTIVE_LOSSES : 5;
+      // Paper measurement uses a loose consecutive-loss threshold (25) so the
+      // kill-switch doesn't constantly pause data collection on a losing streak —
+      // the daily loss cap is the real safety here. Live keeps the strict env cap.
+      const maxConsec = session.mode === "live" ? env().LIVE_MAX_CONSECUTIVE_LOSSES : 25;
       const ks = evaluateKillSwitch({
         dailyLossSol: today,
         maxDailyLossSol: session.params.maxDailyLossSol,
@@ -239,6 +257,13 @@ export async function startAutoTrader() {
         if (entryCooldownUntil && Date.now() >= entryCooldownUntil) {
           entryCooldownUntil = 0;
           log.info("auto entries resumed (cooldown expired)");
+        }
+        // Genesis-sniper path — runs BEFORE handleEntries so fresh-curve mints
+        // get a shot before the DEX-flow filter chain rejects them. No-op when
+        // env.GENESIS_SNIPER is "off" (default). Best-effort: a failure here
+        // must never block the regular entry path.
+        try { await handleGenesisEntries(session); } catch (e) {
+          log.warn("genesis-entries failed", { err: String(e) });
         }
         entryTick = await handleEntries(session);
       }
@@ -320,6 +345,44 @@ async function resolveCurrentForExit(
     if (eff != null) return { vSol: eff, graduated: true, mcapUsd };
   }
   return { vSol: events, graduated, mcapUsd };
+}
+
+/**
+ * Close any OPEN paper position when no session is active to manage it. A session
+ * that stops (daily loss cap, manual Stop, worker restart) otherwise abandons its
+ * open positions with no exit logic running — they hang open indefinitely. This
+ * runs each idle tick and force-closes them at their last mark.
+ */
+async function sweepOrphanedOpenPositions(): Promise<void> {
+  const res = await getDb().execute(sql`
+    SELECT id::text AS id, mint,
+      current_price::float8 AS current_price,
+      entry_price::float8 AS entry_price
+    FROM paper_positions
+    WHERE state = 'OPEN'
+  `);
+  const rows = (res as unknown as {
+    rows: Array<{ id: string; mint: string; current_price: number | null; entry_price: number }>;
+  }).rows;
+  if (rows.length === 0) return;
+  for (const pos of rows) {
+    const price = pos.current_price != null && pos.current_price > 0 ? pos.current_price : pos.entry_price;
+    const closed = await paperClose({
+      positionId: BigInt(pos.id),
+      reason: "session_ended",
+      correlationId: `sweep-${pos.id}`,
+      exitPriceOverride: price,
+    });
+    if (closed.ok) {
+      log.info("swept orphaned open position (no active session)", {
+        id: pos.id,
+        mint: pos.mint,
+        pnl: closed.data.realizedPnlSol.toFixed(4),
+      });
+    } else {
+      log.warn("sweep close rejected", { id: pos.id, code: closed.code });
+    }
+  }
 }
 
 async function handleExits(session: AutoSessionDto) {
@@ -407,6 +470,14 @@ async function handleExits(session: AutoSessionDto) {
           action: ((pos.entry_features as Record<string, unknown> | null)?.action as string) ?? null,
           modulesAtEntry: pos.modules_at_entry,
         });
+        // Post-exit telemetry: snapshot at the close so label-builder matures
+        // forward 5m/30m/1h/6h returns vs exit price — exit-quality signal.
+        await recordPostExitSnapshot({
+          mint: pos.mint,
+          positionId: pos.id,
+          exitVSol: closed.data.exitPrice,
+          exitReason: "timeout_stale",
+        }).catch(() => undefined);
         const win = finalPnl > 0;
         await accumulateStat(statSession, win ? "wins" : "losses", 1);
         await accumulateStat(statSession, "tradesClosed", 1);
@@ -448,37 +519,23 @@ async function handleExits(session: AutoSessionDto) {
           `)
           .catch(() => undefined);
       }
-      const useRealMcap =
-        entryMcapIsReal && entryMcapStamp != null && currentMcapUsd != null && currentMcapUsd > 0;
-      let pnlSol: number;
-      let pctOfSize: number;
-      let realizedExitPrice: number | undefined;
-      if (useRealMcap) {
-        const r = pnlFromMcap({
-          sizeSol: pos.size_sol,
-          entryMcapUsd: entryMcapStamp!,
-          currentMcapUsd: currentMcapUsd!,
-          pumpFeesPct: budget.pumpFeesPct,
-          paperSlippagePct: budget.paperSlippagePct,
-        });
-        pnlSol = r.pnlSol;
-        pctOfSize = r.pctOfSize;
-        // The close books on the bonding curve (value ∝ vSol²), so feed a vSol that
-        // reproduces this mcap ratio when squared: (override/entry)² = mcapRatio ⇒
-        // override = entry · √mcapRatio.
-        realizedExitPrice = pos.entry_v_sol * Math.sqrt(currentMcapUsd! / entryMcapStamp!);
-      } else {
-        const r = paperPnlSol({
-          sizeSol: pos.size_sol,
-          entryVSol: pos.entry_v_sol,
-          currentVSol: current,
-          pumpFeesPct: budget.pumpFeesPct,
-          paperSlippagePct: budget.paperSlippagePct,
-        });
-        pnlSol = r.pnlSol;
-        pctOfSize = r.pctOfSize;
-        realizedExitPrice = graduated && current != null ? current : undefined;
-      }
+      // Single pricing seam (lib/pricing/seam.ts): prefers the real-mcap model
+      // (accurate on/off curve) when we have a real entry mcap + live mcap, else
+      // the bonding-curve vSol model. Invariants locked by lib/pricing/seam.test.ts.
+      const mark = markPnl({
+        sizeSol: pos.size_sol,
+        entryVSol: pos.entry_v_sol,
+        currentVSol: current,
+        entryMcapUsd: entryMcapStamp,
+        currentMcapUsd,
+        entryMcapReal: entryMcapIsReal,
+        graduated,
+        pumpFeesPct: budget.pumpFeesPct,
+        paperSlippagePct: budget.paperSlippagePct,
+      });
+      const pnlSol = mark.pnlSol;
+      const pctOfSize = mark.pctOfSize;
+      const realizedExitPrice = mark.realizedExitVSol ?? undefined;
 
       // Profit-curve capture: track peak unrealized PnL (and when) in
       // entry_features. Feeds the trailing stop and the learner's exit-timing.
@@ -502,8 +559,14 @@ async function handleExits(session: AutoSessionDto) {
       const tp1FractionExisting = pos.tp1_fraction ?? 0;
       const id = BigInt(pos.id);
 
+      // T3.3 — genesis trades use a moon-tail-preserving exit: wide rug-cut SL
+      // only, no TP / no trail / no stagnation / no TP1 ladder. The exit backtest
+      // proved that any tail-clipping exit destroys total return (the edge is the
+      // few moonshots). So genesis skips the ladder entirely and holds to max-hold.
+      const isGenesis = ef.genesis_snipe === true;
+
       // ── TP1 partial via the new engine (no manual jsonb stamping) ──
-      if (ladderOn && !tp1HitAt && pctOfSize >= tp1Pct) {
+      if (ladderOn && !isGenesis && !tp1HitAt && pctOfSize >= tp1Pct) {
         const partial = await paperPartialClose({
           positionId: id,
           fraction: tp1Fraction,
@@ -531,15 +594,28 @@ async function handleExits(session: AutoSessionDto) {
         continue;
       }
 
-      // Trailing stop fires once armed (peak ≥ arm) and price falls trailStop
-      // below the peak — after take-profit (full target) but before stop-loss.
-      const exit = decidePaperExit(pctOfSize, peakPct, ageMs, {
-        tpPct,
-        slPct,
-        maxHoldMs,
-        trailArmPct: trailingEnabled ? trailArmPct : 0,
-        trailStopPct: trailingEnabled ? trailStopPct : 0,
-      });
+      // Exit logic: stop-loss → trailing stop (lets armed winners RUN, no fixed cap)
+      // → fixed TP for small non-armed winners → stagnation cut → max-hold.
+      // T3.3 — genesis trades override with a tail-preserving policy (wide SL only).
+      const exit = isGenesis
+        ? decidePaperExit(pctOfSize, peakPct, ageMs, {
+            tpPct: Number.POSITIVE_INFINITY, // never cap a moon
+            slPct: env().GENESIS_EXIT_SL_PCT, // wide catastrophic rug-cut only
+            maxHoldMs: env().GENESIS_EXIT_MAX_HOLD_MIN * 60_000,
+            trailArmPct: 0, // no trailing — would clip the tail
+            trailStopPct: 0,
+            stagnationMs: 0, // no stagnation cut — a flat coin may still moon
+          })
+        : decidePaperExit(pctOfSize, peakPct, ageMs, {
+            tpPct,
+            slPct,
+            maxHoldMs,
+            trailArmPct: trailingEnabled ? trailArmPct : 0,
+            trailStopPct: trailingEnabled ? trailStopPct : 0,
+            // Free capital from coins that never built momentum: if a position hasn't
+            // armed the trail (never reached +trailArmPct) by 40% of max-hold, cut it.
+            stagnationMs: trailingEnabled ? Math.round(maxHoldMs * 0.4) : 0,
+          });
       if (!exit) continue;
 
       const reason = tp1HitAt ? `${exit}+tp1` : exit;
@@ -570,6 +646,17 @@ async function handleExits(session: AutoSessionDto) {
         action: ((pos.entry_features as Record<string, unknown> | null)?.action as string) ?? null,
         modulesAtEntry: pos.modules_at_entry,
       });
+      // Post-exit telemetry: snapshot at exit so the existing label-builder
+      // matures forward returns (ret_5m/30m/1h + maxGain/Drawdown/isRug) vs the
+      // exit price. Lets us answer "did the coin go up after we sold?" without
+      // any new infra. Best-effort — must not block the close.
+      await recordPostExitSnapshot({
+        mint: pos.mint,
+        positionId: pos.id,
+        exitVSol: closed.data.exitPrice,
+        exitMcapUsd: currentMcapUsd ?? null,
+        exitReason: reason,
+      }).catch(() => undefined);
       // 3-layer causal attribution (L5.1): split PnL into edge/execution/market
       // so the learner never blames strategy for execution slippage or rugs.
       const execSlipBps = typeof ef.exec_slippage_bps === "number" ? (ef.exec_slippage_bps as number) : null;
@@ -849,6 +936,129 @@ type EntryTickStats = {
   recentFilterSkips: Array<{ ts: string; mint: string; reason: string }>;
 };
 
+/**
+ * Genesis-sniper entry path (2026-06-15) — parallel to handleEntries.
+ *
+ * The DEX-flow filter chain in handleEntries (dexBuysM5 floor, MAX_ENTRY_MCAP)
+ * mechanically rejects fresh on-curve mints — DexScreener has no data yet, and
+ * pump.fun mcap on a 30s-old coin is under $5k. But the 6,133-buy elite-wallet
+ * analysis and the 27,493-mint backtest both showed: the proven winning regime
+ * is buying at vSol 18–60 within 5–60s of launch. This function is the entry
+ * path that targets that regime, gated by env.GENESIS_SNIPER=on.
+ *
+ * Bypasses qualifyEntry/passesConfluence/MAX_ENTRY_MCAP_USD by design — those
+ * are post-grad gates that would reject every fresh-curve mint. Genesis trades
+ * are stamped `entry_features.genesis_snipe=true` so the post-exit poller and
+ * any future analysis can attribute outcomes back to this path cleanly.
+ */
+async function handleGenesisEntries(session: AutoSessionDto): Promise<number> {
+  if (env().GENESIS_SNIPER !== "on") return 0;
+  if (session.mode !== "paper") return 0;  // paper only until proven
+
+  // Capacity check — same logic as handleEntries, share the global cap.
+  const own = await fetchOpenOwnershipCounts(session.id);
+  const globalCap = getPaperConfig().maxOpenPositions;
+  const remaining = entryHeadroom({
+    sessionMaxConcurrent: session.params.maxConcurrent,
+    ownedByActive: own.ownedByActive,
+    globalCap,
+    totalOpen: own.total,
+    applyGlobalCap: true,
+  });
+  if (remaining <= 0) return 0;
+
+  const candidates = await fetchGenesisSnipeCandidates({
+    maxAgeSec: env().GENESIS_SNIPER_MAX_AGE_SEC,
+    limit: 30,
+  });
+  if (!candidates.length) return 0;
+
+  const heldMints = await fetchOpenMintsForSession(session.id);
+  const size = env().GENESIS_SNIPER_SIZE_SOL;
+  if (size <= 0) return 0;
+
+  let opened = 0;
+  for (const sig of candidates) {
+    if (opened >= remaining) break;
+    if (heldMints.has(sig.mint)) continue;
+
+    const dec = evaluateGenesisSnipe(sig);
+    if (!dec.fire) continue;
+
+    const bsr = sig.buyVolSol30s + sig.sellVolSol30s > 0
+      ? sig.buyVolSol30s / (sig.buyVolSol30s + sig.sellVolSol30s)
+      : 1;
+
+    const entryFeatures: Record<string, unknown> = {
+      session_id: session.id,
+      session_mode: "paper",
+      auto: true,
+      action: "BUY_STRONG",
+      genesis_snipe: true,
+      genesis_confidence: dec.confidence,
+      genesis_bucket: dec.vSolBucket,
+      entry_tier: "strict",
+      entry_age_seconds: sig.ageSec,
+      entry_v_sol: sig.currentVSol,
+      genesis_buys_30s: sig.buys30s,
+      genesis_sells_30s: sig.sells30s,
+      genesis_unique_buyers_30s: sig.uniqueBuyers30s,
+      genesis_buy_sell_ratio: bsr,
+      genesis_buy_vol_sol_30s: sig.buyVolSol30s,
+    };
+
+    const intent: TradeIntent = {
+      intentId: `genesis-${sig.mint.slice(0, 8)}-${Date.now()}`,
+      mint: sig.mint,
+      side: "buy",
+      mode: "paper",
+      sizeSol: size,
+      reason: "BUY_STRONG",
+      tier: "strict",
+      regime: getCurrentRegime().regime,
+      createdAtMs: Date.now(),
+    };
+    const plan = buildExecutionPlan(intent, {
+      route: "paper",
+      expectedPriceSol: sig.currentVSol,
+      maxSlippageBps: env().LIVE_SLIPPAGE_BPS,
+      priorityFeeSol: 0,
+      poolLiquiditySol: sig.currentVSol,
+    });
+
+    try {
+      const { outcome, positionId } = await executePaperBuy(plan, {
+        mint: sig.mint,
+        symbol: null,
+        sizeSol: size,
+        takeProfitPct: session.params.takeProfitPct ?? undefined,
+        stopLossPct: session.params.stopLossPct ?? undefined,
+        correlationId: `genesis-${sig.mint.slice(0, 8)}-${Date.now()}`,
+        decisionId: null,
+        entryFeatures,
+        modulesAtEntry: null,
+        meta: { sessionId: session.id, kind: "genesis_snipe" },
+      });
+      if (outcome.status === "filled" && positionId != null) {
+        opened++;
+        await accumulateStat(session.id, "tradesOpened", 1);
+        log.info("genesis-snipe opened", {
+          mint: sig.mint, vSol: sig.currentVSol.toFixed(1),
+          age: sig.ageSec.toFixed(0), conf: dec.confidence.toFixed(2),
+          bucket: dec.vSolBucket, buys30s: sig.buys30s, uniq: sig.uniqueBuyers30s,
+        });
+      } else {
+        log.info("genesis-snipe rejected by executor", {
+          mint: sig.mint, status: outcome.status, reason: outcome.rejectReason,
+        });
+      }
+    } catch (e) {
+      log.warn("genesis-snipe open failed", { mint: sig.mint, err: String(e) });
+    }
+  }
+  return opened;
+}
+
 async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
   const transientSkips = new Map<string, number>();
   const recentFilterSkips: Array<{ ts: string; mint: string; reason: string }> = [];
@@ -863,9 +1073,40 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     }
   };
 
-  // Capacity check
-  const openCount = await openCountForSession(session);
-  const remaining = Math.max(0, session.params.maxConcurrent - openCount);
+  // Capacity check. Paper sessions are bounded by BOTH their own concurrency cap
+  // AND the global paper-ledger cap (issue #11): orphaned OPEN positions from a
+  // stopped session consume the kernel's maxOpenPositions, so counting only this
+  // session's positions would make us attempt opens the kernel will reject.
+  let remaining: number;
+  if (session.mode === "paper") {
+    const own = await fetchOpenOwnershipCounts(session.id);
+    const globalCap = getPaperConfig().maxOpenPositions;
+    remaining = entryHeadroom({
+      sessionMaxConcurrent: session.params.maxConcurrent,
+      ownedByActive: own.ownedByActive,
+      globalCap,
+      totalOpen: own.total,
+      applyGlobalCap: true,
+    });
+    if (remaining <= 0 && own.orphaned > 0 && own.total >= globalCap) {
+      // Log only when the orphan count changes, or at most once every 5 min —
+      // these positions self-clear (stagnation/max-hold), so per-tick spam is noise.
+      const now = Date.now();
+      if (own.orphaned !== lastOrphanCount || now - lastOrphanWarnAt > 300_000) {
+        log.warn("global paper cap held by orphaned positions from a stopped session (they self-clear at stagnation/max-hold)", {
+          orphaned: own.orphaned,
+          ownedByActive: own.ownedByActive,
+          total: own.total,
+          globalCap,
+        });
+        lastOrphanWarnAt = now;
+        lastOrphanCount = own.orphaned;
+      }
+    }
+  } else {
+    const openCount = await openCountForSession(session);
+    remaining = Math.max(0, session.params.maxConcurrent - openCount);
+  }
   if (remaining <= 0) {
     return { pendingCount: 0, opened: 0, topSkipReasons: [], recentFilterSkips: [] };
   }
@@ -896,6 +1137,11 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
   }
   const vSolBatch = await latestVSolBatch(pendingMints);
   const demoRelaxed = tagDemo && autoDemoRelaxEnabled();
+  // V2-simple entry (SYSTEM_DESIGN §IV.8): the soft selection gates below
+  // (max-entry-age, order-flow veto, activity floor) are the "complexity" the
+  // ablation found harmful — bypass them. Hard safety vetoes (rugged label,
+  // bundle/mechanical) below are kept.
+  const v2Mode = isV2SimpleEntry();
   for (const d of pendings) {
     if (opened >= remaining) break;
     if (heldMints.has(d.mint)) {
@@ -951,7 +1197,54 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
 
     const flowData = await fetchMintFlow(d.mint);
     const timingAge = resolveTimingAgeSeconds(flowData.ageSeconds, d.ts);
+
+    // Entry-age ceiling (data-driven from eval-paper): coins entered older than
+    // ~1 min lose heavily (1–5 min bucket ≈ −7.5%) while fresh entries win — late
+    // entries buy the top. Skip stale candidates when MAX_ENTRY_AGE_SEC is set.
+    const maxEntryAge = v2Mode ? 0 : env().MAX_ENTRY_AGE_SEC;
+    if (maxEntryAge > 0 && timingAge != null && timingAge > maxEntryAge) {
+      bumpTransient(d.mint, `too old (${Math.round(timingAge)}s > ${maxEntryAge}s)`);
+      continue;
+    }
+
+    // Order-flow at entry. Most traded coins are DEX-discovered and have NO
+    // trade-level rows in our bonding-curve `events` feed, so fetchMintFlow above
+    // is blind for them. DexScreener 5m aggregates are the only flow signal we
+    // have — capture them for the learner AND use them for a conservative gate.
+    const dexSnap = (await fetchDexMarketBatchCached([d.mint]).catch(() => null))?.get(d.mint) ?? null;
+    // Don't buy into a coin that's being actively dumped: enough activity to be
+    // meaningful, sellers clearly dominating, and price not rising. Conservative
+    // (requires both net selling AND a non-positive 5m move) so it filters obvious
+    // weakness without choking off normal entries.
+    if (
+      !v2Mode &&
+      dexSnap &&
+      dexSnap.buysM5 + dexSnap.sellsM5 >= 6 &&
+      dexSnap.buySellRatio < 0.7 &&
+      (dexSnap.priceChangeM5 ?? 0) <= 0
+    ) {
+      const reason = `net selling b/s=${dexSnap.buySellRatio.toFixed(2)} Δ5m=${(dexSnap.priceChangeM5 ?? 0).toFixed(1)}%`;
+      log.info("auto skipped (order-flow)", { mint: d.mint, reason });
+      bumpTransient(d.mint, reason);
+      continue;
+    }
     const insider = await analyzeMintInsiders(d.mint);
+    // Entry-activity floor (data-driven, refined 2026-06-15 on 320 trades). Require,
+    // for DEX-flow coins (dexSnap present), real 5m activity — high buy count OR a
+    // smart-money buyer. Pure bonding-curve newborns with no DexScreener data are
+    // unaffected. No momentum gate: winners actually had NEGATIVE 5m change at entry
+    // (buying already-pumping coins = local top). Env-tunable; 0 disables.
+    const minDexBuys = v2Mode ? 0 : env().ENTRY_MIN_DEX_BUYS_M5;
+    if (minDexBuys > 0 && dexSnap) {
+      const buys = dexSnap.buysM5 ?? 0;
+      const hasSmart = insider.smartMoneyCount >= 1;
+      if (buys < minDexBuys && !hasSmart) {
+        const reason = `low activity (buys=${buys}/${minDexBuys} smc=${insider.smartMoneyCount})`;
+        log.info("auto skipped (activity floor)", { mint: d.mint, reason });
+        bumpTransient(d.mint, reason);
+        continue;
+      }
+    }
     const entryCtx = {
       mint: d.mint,
       action: d.action,
@@ -995,7 +1288,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     // data, so a coin that has already graduated to a large DEX cap can slip through
     // as a "fresh launch". When MAX_ENTRY_MCAP_USD is set, skip those. Cached fetch,
     // reused by the entry-mcap stamp below.
-    const maxEntryMcap = env().MAX_ENTRY_MCAP_USD;
+    const maxEntryMcap = v2Mode ? 0 : env().MAX_ENTRY_MCAP_USD;
     if (maxEntryMcap > 0 && allowsLaunchTier()) {
       try {
         const coin = await fetchPumpFunCoin(d.mint);
@@ -1038,6 +1331,14 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
         entry_tier: entryTier,
         // L0.2: token age (seconds) at entry — our reaction time. Lower = faster.
         entry_age_seconds: timingAge ?? null,
+        // DexScreener 5m order-flow at entry — the momentum signal for DEX coins
+        // (logged so the learner can mine which values actually precede winners).
+        dexBuySellRatio: dexSnap?.buySellRatio ?? null,
+        dexVolAcceleration: dexSnap?.volAcceleration ?? null,
+        dexPriceChangeM5: dexSnap?.priceChangeM5 ?? null,
+        dexBuysM5: dexSnap?.buysM5 ?? null,
+        dexSellsM5: dexSnap?.sellsM5 ?? null,
+        dexVolM5: dexSnap?.volM5 ?? null,
       };
       if (tagDemo) entryFeatures.ui_mode = "demo";
 

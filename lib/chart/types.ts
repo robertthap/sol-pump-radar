@@ -1,4 +1,4 @@
-export type ChartTimeframe = "1s" | "5s" | "1m";
+export type ChartTimeframe = "1s" | "5s" | "15s" | "1m" | "5m" | "15m" | "1h" | "4h" | "1D";
 
 export type PriceRegime = "bonding_curve" | "dex";
 

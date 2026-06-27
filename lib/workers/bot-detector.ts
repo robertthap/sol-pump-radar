@@ -223,6 +223,12 @@ async function refreshWalletProfilesBatch() {
   if (wallets.length === 0) return 0;
 
   // Aggregate per (wallet, mint) the buy/sell sums.
+  // T1.2 — INTENTIONALLY spans BOTH venues (no venue filter). A wallet that buys
+  // on the bonding curve and sells on PumpSwap post-graduation previously showed
+  // only the curve buy (the DEX sell was invisible) → counted as an un-exited bag
+  // → false loss → wrongly classified non-smart. With PumpSwap ingestion the sell
+  // now appears in sol_out, so post-grad winners are characterized correctly.
+  // DO NOT add `venue='curve'` here — that would re-introduce the survivorship bias.
   const wlist = wallets.map((w) => `'${w.replace(/'/g, "''")}'`).join(",");
   const agg = await getDb().execute(sql`
     SELECT wallet, mint,

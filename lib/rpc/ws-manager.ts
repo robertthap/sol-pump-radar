@@ -12,6 +12,18 @@ export type LogsNotification = {
   logs: string[];
 };
 
+/**
+ * T1.1 — emitted after a successful re-subscribe following a real disconnect.
+ * The ingestor uses this to compute the gap window and kick gap-recovery.
+ * `lastSlot`/`lastSig` are the last successfully observed values from BEFORE
+ * the disconnect. Not emitted on the very first connection (no gap exists yet).
+ */
+export type ReconnectInfo = {
+  lastSlot: number;
+  lastSig: string | null;
+  lastTs: Date;
+};
+
 type WsState =
   | { kind: "idle" }
   | { kind: "connecting"; ws: WebSocket; openedAt: number }
@@ -25,11 +37,24 @@ export class WsLogsSubscriber {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private stopped = false;
   private consecutiveFailures = 0;
+  // T1.1 — last-seen high-water-mark. Updated on every notification; sampled
+  // on disconnect; reported via onReconnect after a successful re-subscribe.
+  private lastSlot = 0;
+  private lastSig: string | null = null;
+  private lastTs: Date = new Date();
+  // Snapshot of lastSlot/lastSig at the moment of the most recent disconnect,
+  // so the post-reconnect callback reports the right pre-gap state even if
+  // some no-op `connect()` calls happen in between.
+  private gapAnchor: ReconnectInfo | null = null;
+  // True once we've successfully opened at least once. Suppresses the
+  // first-connect "reconnect" emission (no gap exists yet).
+  private hasBeenOpen = false;
 
   constructor(
     private readonly endpoints: string[],
     private readonly mention: string,
     private readonly onLogs: (n: LogsNotification) => void,
+    private readonly onReconnect?: (info: ReconnectInfo) => void,
   ) {}
 
   start() {
@@ -124,7 +149,16 @@ export class WsLogsSubscriber {
     }
     if (msg.method === "logsNotification") {
       const r = (msg.params?.result as { value?: LogsNotification }) ?? null;
-      if (r && r.value) this.onLogs(r.value);
+      if (r && r.value) {
+        // T1.1 — track HWM for gap detection. Slot may decrease across
+        // independent forks in rare cases; keep max-seen as the watermark.
+        if (r.value.slot > this.lastSlot) {
+          this.lastSlot = r.value.slot;
+          this.lastSig = r.value.signature ?? null;
+          this.lastTs = new Date();
+        }
+        this.onLogs(r.value);
+      }
       return;
     }
     if (typeof msg.id === "number" && typeof msg.result === "number") {
@@ -134,6 +168,16 @@ export class WsLogsSubscriber {
       const stats = getIngestorStats();
       stats.connState = "subscribed";
       log.info("subscribed", { subId: msg.result });
+      // T1.1 — emit reconnect AFTER subscription is confirmed (so subsequent
+      // notifications start arriving). Skip the very first connect (no gap).
+      if (this.hasBeenOpen && this.gapAnchor && this.onReconnect) {
+        const info = this.gapAnchor;
+        this.gapAnchor = null;
+        try { this.onReconnect(info); } catch (e) {
+          log.warn("onReconnect handler threw", { err: String(e) });
+        }
+      }
+      this.hasBeenOpen = true;
       return;
     }
   }
@@ -146,10 +190,21 @@ export class WsLogsSubscriber {
     const lived = this.state.kind === "idle" ? 0 : Date.now() - this.state.openedAt;
     log.warn("closed", { code, reason, livedMs: lived });
     this.state = { kind: "idle" };
+    // T1.1 — snapshot the HWM at moment of disconnect, so the post-reconnect
+    // callback can use it to compute the gap window. Don't overwrite an
+    // existing anchor (multiple rapid reconnects all share the same gap).
+    if (this.hasBeenOpen && !this.gapAnchor && this.lastSlot > 0) {
+      this.gapAnchor = { lastSlot: this.lastSlot, lastSig: this.lastSig, lastTs: this.lastTs };
+    }
     if (lived < 5_000) this.consecutiveFailures++;
     else this.consecutiveFailures = 0;
     this.endpointIndex = (this.endpointIndex + 1) % this.endpoints.length;
     this.scheduleReconnect(reason ?? `closed ${code}`);
+  }
+
+  /** T1.1 — current high-water-mark for cold-boot watermark seeding. */
+  getHighWaterMark(): ReconnectInfo {
+    return { lastSlot: this.lastSlot, lastSig: this.lastSig, lastTs: this.lastTs };
   }
 
   private scheduleReconnect(reason: string) {

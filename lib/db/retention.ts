@@ -37,14 +37,48 @@ export async function runRetentionPrune(): Promise<{
     /* optional table */
   }
 
+  // High-churn tables that were previously UNBOUNDED and were pegging the CPU
+  // (token_features ~6GB, ingest_facts ~1.5GB). Only the LATEST token_features
+  // row per mint is ever read live, and the measurement backbone already keeps
+  // point-in-time copies in feature_snapshots — so a short window is safe and
+  // dramatically lighter (faster queries → faster intelligence/auto ticks →
+  // faster entries, which the eval data shows is what wins). Chunked so the
+  // first big catch-up delete never holds a long lock.
+  const chunkPrune = async (table: string, tsCol: string, olderThan: string): Promise<number> => {
+    let total = 0;
+    try {
+      // Up to 7.5M rows/run in 50k chunks — enough to clear the one-time backlog
+      // in the first hourly run, then maintains (each chunk is a small, quick lock).
+      for (let i = 0; i < 150; i++) {
+        const r = await db.execute(
+          sql.raw(
+            `DELETE FROM ${table} WHERE ctid IN (` +
+              `SELECT ctid FROM ${table} WHERE ${tsCol} < now() - interval '${olderThan}' LIMIT 50000)`,
+          ),
+        );
+        const n = rowCount(r);
+        total += n;
+        if (n < 50000) break;
+      }
+    } catch {
+      /* optional table */
+    }
+    return total;
+  };
+
+  const tokenFeaturesN = await chunkPrune("token_features", "ts", "2 days");
+  const ingestFactsN = await chunkPrune("ingest_facts", "created_at", `${days} days`);
+
   const counts = {
     events: rowCount(events),
     traces: rowCount(traces),
     continuationEvents: rowCount(continuationEvents),
     engineBTraces: engineBTracesN,
+    tokenFeatures: tokenFeaturesN,
+    ingestFacts: ingestFactsN,
   };
 
-  if (counts.events + counts.traces + counts.continuationEvents + counts.engineBTraces > 0) {
+  if (Object.values(counts).some((n) => n > 0)) {
     log.info("retention prune", { days, ...counts });
   }
   return counts;

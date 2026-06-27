@@ -2,6 +2,10 @@
 services:
   postgres:
     image: postgres:16
+    # Default Docker /dev/shm is only 64MB — too small for Postgres parallel
+    # operations (VACUUM, large joins/sorts) under this workload, which fails with
+    # "No space left on device". 1GB removes that hidden constraint.
+    shm_size: 1gb
     environment:
       POSTGRES_USER: sol
       POSTGRES_PASSWORD: sol

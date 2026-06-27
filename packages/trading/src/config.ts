@@ -13,6 +13,13 @@ export type PaperRuntimeConfig = {
   enableLatency: boolean;
   /** Per-side fee in bps (e.g. 100 = 1.0%). pump.fun graduates take ~1% per side. */
   feeBps: number;
+  /**
+   * Priority fee (SOL) charged PER LEG to model the real on-chain cost paper
+   * otherwise ignores. On a 0.03–0.05 SOL trade a 0.0005 SOL priority fee is
+   * ~1–1.7% per side — material for a thin-edge strategy, so paper must subtract
+   * it or its PnL is optimistically biased and the OOS verdict is untrustworthy.
+   */
+  priorityFeeSol: number;
   /** Base slippage floor in bps before liquidity impact. */
   baseSlippageBps: number;
   /** Simulated execution latency window (ms) when latency is enabled. */
@@ -44,6 +51,7 @@ export function paperConfigFromEnv(env: NodeJS.ProcessEnv = process.env): PaperR
     enableFees: flag(env.PAPER_ENABLE_FEES, true),
     enableLatency: flag(env.PAPER_ENABLE_LATENCY, true),
     feeBps: 100,
+    priorityFeeSol: num(env.LIVE_PRIORITY_FEE_SOL, 0.0005),
     baseSlippageBps: 30,
     latencyMinMs: 80,
     latencyMaxMs: 280,

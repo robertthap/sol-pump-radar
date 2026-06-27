@@ -88,7 +88,7 @@ export class CommitPipeline {
 
     const quotes = this.dexQuotes.get(mint) ?? [];
     const agg = this.getAggregator(mint);
-    let stream = { ...this.getStreamState(mint) };
+    const stream = { ...this.getStreamState(mint) };
     const committed: import("@/lib/chart/types").CommittedTrade[] = [];
     let regimeSwitch: RegimeSwitchPayload | undefined;
 

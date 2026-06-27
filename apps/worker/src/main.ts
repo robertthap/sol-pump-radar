@@ -19,6 +19,8 @@ import { startRuntimeSnapshotWriter } from "@/lib/runtime/runtime-snapshot";
 import { startChartWsServer } from "@/lib/chart/runtime/chartWsServer";
 import { startChartAggregatorLane } from "@/lib/workers/chart-aggregator-lane";
 import { startChartDexQuoteLane } from "@/lib/workers/chart-dex-quote-lane";
+import { startChartOnchainQuoteLane } from "@/lib/workers/chart-onchain-quote-lane";
+import { startChartGeckoRefreshLane } from "@/lib/workers/chart-gecko-refresh-lane";
 import { startChartReconcileLane } from "@/lib/workers/chart-reconcile-lane";
 import { startChartGraduationLane } from "@/lib/workers/chart-graduation-lane";
 import { bootWorkerWallet } from "@/lib/wallet/worker-vault";
@@ -117,6 +119,8 @@ async function main() {
   stops.push(startChartWsServer());
   stops.push(startChartAggregatorLane());
   stops.push(startChartDexQuoteLane());
+  stops.push(startChartOnchainQuoteLane());
+  stops.push(startChartGeckoRefreshLane());
   stops.push(startChartReconcileLane());
   stops.push(startChartGraduationLane());
 

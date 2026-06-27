@@ -6,7 +6,7 @@ import { logger } from "@/lib/log";
 import { touchWorker } from "@/lib/workers/heartbeat";
 import { buildCommittedBatch, reconcileWindow } from "@/lib/chart/engine/reconcile";
 import { replayTrades } from "@/lib/chart/data/candleBuilder";
-import { DEFAULT_CHART_TF } from "@/lib/chart/constants";
+import { DEFAULT_CHART_TF, CHART_AGGREGATOR_TICK_MS } from "@/lib/chart/constants";
 import { fetchDexQuotes, fetchStreamState, fetchTrades } from "@/lib/chart/data/tradeStore";
 import { broadcastChart, getChartSubscribedMints } from "@/lib/chart/runtime/chartWsServer";
 import { envelope } from "@/lib/chart/realtime/eventRouter";
@@ -70,9 +70,13 @@ export function startChartAggregatorLane(): () => void {
     try {
       const mints = new Set(getChartSubscribedMints());
       // Also tail mints with recent trades (last 2 min)
+      // Anchor "recently active" to the latest event ts, NOT wall-clock now(): the host
+      // clock jumps after sleep, which would otherwise empty this discovery window (see
+      // A4). Subscribed mints are always tailed regardless via getChartSubscribedMints().
       const recent = await getDb().execute(sql`
         SELECT DISTINCT mint FROM events
-        WHERE kind IN ('buy', 'sell') AND ts > now() - interval '2 minutes'
+        WHERE kind IN ('buy', 'sell')
+          AND ts > (SELECT ts FROM events ORDER BY id DESC LIMIT 1) - interval '2 minutes'
         LIMIT 50
       `);
       for (const r of (recent as unknown as { rows: { mint: string }[] }).rows) {
@@ -98,7 +102,7 @@ export function startChartAggregatorLane(): () => void {
     }
   };
 
-  const id = setInterval(() => void tick(), 2000);
+  const id = setInterval(() => void tick(), CHART_AGGREGATOR_TICK_MS);
   void tick();
   return () => clearInterval(id);
 }

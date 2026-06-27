@@ -1,254 +1,222 @@
 "use client";
 
-import { useMemo } from "react";
-import { create } from "zustand";
 import type {
   Candle,
+  CandlePatch,
+  ChartMarkerInstance,
   ChartTimeframe,
   CommitBundle,
-  ChartMarkerInstance,
-  UserTrade,
   PriceRegime,
+  SyncSnapshot,
 } from "@/lib/chart/types";
 import { MAX_LIVE_BUFFER } from "@/lib/chart/constants";
 import { mergeCandlePages, mergeSnapshotTail } from "@/lib/chart/data/chartCache";
-import { shouldAcceptSeq, hasGap } from "@/lib/chart/realtime/eventRouter";
-import { buildMarkers } from "@/lib/chart/engine/markerEngine";
 import { userTradesVersion } from "@/lib/chart/engine/positionBuilder";
+import type { UserTrade } from "@/lib/chart/types";
+import { buildMarkers } from "@/lib/chart/engine/markerEngine";
 
-type ChartSeq = { epoch: number; seq: number; lastTradeId: string };
-
-export type MintChartSlice = {
+export type ChartMintSlice = {
+  mint: string;
   tf: ChartTimeframe;
   historicalCandles: Candle[];
   liveBuffer: CommitBundle[];
   isAtLiveEdge: boolean;
-  chartSeq: ChartSeq;
+  lastTradeId: string;
+  chartSeq: { epoch: number; seq: number };
   marketCap: number;
   regime: PriceRegime;
+  graduationAt: number | null;
   markersById: Map<string, ChartMarkerInstance>;
-  userTrades: UserTrade[];
   userTradesVersion: string;
   loading: boolean;
-  error: string | null;
-  oldestTradeId: string | null;
   wsConnected: boolean;
-  resyncFlag: number;
+  oldestTradeId: string | null;
+  hasMore: boolean;
 };
 
-function emptySlice(): MintChartSlice {
+export function createInitialSlice(mint: string, tf: ChartTimeframe): ChartMintSlice {
   return {
-    tf: "1m",
+    mint,
+    tf,
     historicalCandles: [],
     liveBuffer: [],
     isAtLiveEdge: true,
-    chartSeq: { epoch: 1, seq: 0, lastTradeId: "0" },
+    lastTradeId: "0",
+    chartSeq: { epoch: 1, seq: 0 },
     marketCap: 0,
     regime: "bonding_curve",
+    graduationAt: null,
     markersById: new Map(),
-    userTrades: [],
     userTradesVersion: "",
     loading: true,
-    error: null,
-    oldestTradeId: null,
     wsConnected: false,
-    resyncFlag: 0,
+    oldestTradeId: null,
+    hasMore: false,
   };
 }
 
-function patchCandlesFromBundle(candles: Candle[], bundle: CommitBundle, tf: ChartTimeframe): Candle[] {
-  const patches = bundle.candlePatches.filter((p) => p.tf === tf);
+export function mergeCandlePatches(
+  candles: Candle[],
+  patches: CandlePatch[],
+  tf: ChartTimeframe,
+): Candle[] {
   if (!patches.length) return candles;
-  const map = new Map(candles.map((c) => [c.time, c]));
+  const map = new Map<number, Candle>();
+  for (const c of candles) map.set(c.time, c);
   for (const p of patches) {
-    const t = Math.floor(p.bucketTime / 1000);
-    map.set(t, p.candle);
+    if (p.tf !== tf) continue;
+    map.set(p.candle.time, p.candle);
   }
   return [...map.values()].sort((a, b) => a.time - b.time);
 }
 
-type Store = {
-  slices: Record<string, MintChartSlice>;
-  resetMint: (mint: string) => void;
-  setTf: (mint: string, tf: ChartTimeframe) => void;
-  setAtLiveEdge: (mint: string, v: boolean) => void;
-  setHistorical: (mint: string, candles: Candle[], oldestTradeId: string | null) => void;
-  prependHistorical: (mint: string, older: Candle[], oldestTradeId: string | null) => void;
-  setUserTrades: (mint: string, fills: UserTrade[]) => void;
-  applySnapshot: (
-    mint: string,
-    opts: {
-      candles: Candle[];
-      marketCap: number;
-      epoch: number;
-      lastTradeId: string;
-      regime?: PriceRegime;
-    },
-  ) => void;
-  applyBundle: (mint: string, bundle: CommitBundle) => void;
-  setRegime: (mint: string, regime: PriceRegime) => void;
-  flushLiveBuffer: (mint: string) => CommitBundle[];
-  requestResync: (mint: string) => void;
-  setWsConnected: (mint: string, v: boolean) => void;
-};
-
-function updateSlice(
-  set: (fn: (s: Store) => Partial<Store>) => void,
-  get: () => Store,
-  mint: string,
-  patch: Partial<MintChartSlice> | ((prev: MintChartSlice) => Partial<MintChartSlice>),
-) {
-  set((s) => {
-    const prev = s.slices[mint] ?? emptySlice();
-    const delta = typeof patch === "function" ? patch(prev) : patch;
-    return { slices: { ...s.slices, [mint]: { ...prev, ...delta } } };
-  });
+function applyBundleToCandles(
+  candles: Candle[],
+  bundle: CommitBundle,
+  tf: ChartTimeframe,
+): Candle[] {
+  return mergeCandlePatches(candles, bundle.candlePatches, tf);
 }
 
-export const useChartStore = create<Store>((set, get) => ({
-  slices: {},
+export function flushLiveBuffer(slice: ChartMintSlice): ChartMintSlice {
+  if (!slice.liveBuffer.length) return slice;
+  let candles = slice.historicalCandles;
+  let marketCap = slice.marketCap;
+  let lastTradeId = slice.lastTradeId;
+  let regime = slice.regime;
+  let chartSeq = slice.chartSeq;
+  for (const b of slice.liveBuffer) {
+    candles = applyBundleToCandles(candles, b, slice.tf);
+    marketCap = b.marketCap;
+    lastTradeId = b.lastTradeId;
+    regime = b.regime;
+    chartSeq = { epoch: b.epoch, seq: b.seq };
+  }
+  return {
+    ...slice,
+    historicalCandles: candles,
+    liveBuffer: [],
+    marketCap,
+    lastTradeId,
+    regime,
+    chartSeq,
+  };
+}
 
-  resetMint: (mint) => set((s) => ({ slices: { ...s.slices, [mint]: emptySlice() } })),
-
-  setTf: (mint, tf) => {
-    updateSlice(set, get, mint, (prev) => ({
-      tf,
-      markersById: buildMarkers(prev.userTrades, tf),
-    }));
-  },
-
-  setAtLiveEdge: (mint, v) => updateSlice(set, get, mint, { isAtLiveEdge: v }),
-
-  setHistorical: (mint, candles, oldestTradeId) =>
-    updateSlice(set, get, mint, { historicalCandles: candles, oldestTradeId, loading: false }),
-
-  prependHistorical: (mint, older, oldestTradeId) => {
-    updateSlice(set, get, mint, (prev) => ({
-      historicalCandles: mergeCandlePages(prev.historicalCandles, older),
-      oldestTradeId: oldestTradeId ?? prev.oldestTradeId,
-    }));
-  },
-
-  setUserTrades: (mint, fills) => {
-    updateSlice(set, get, mint, (prev) => {
-      const tf = prev.tf;
-      return {
-        userTrades: fills,
-        userTradesVersion: userTradesVersion(fills),
-        markersById: buildMarkers(fills, tf),
-      };
-    });
-  },
-
-  applySnapshot: (mint, { candles, marketCap, epoch, lastTradeId, regime }) => {
-    updateSlice(set, get, mint, (prev) => ({
-      historicalCandles:
-        prev.historicalCandles.length > 0 ? mergeSnapshotTail(prev.historicalCandles, candles) : candles,
-      marketCap,
-      regime: regime ?? prev.regime,
-      chartSeq: { epoch, seq: 0, lastTradeId },
-      loading: false,
-      liveBuffer: [],
-    }));
-  },
-
-  applyBundle: (mint, bundle) => {
-    const prev = get().slices[mint] ?? emptySlice();
-    const next = {
-      epoch: bundle.epoch,
-      seq: bundle.seq,
-      lastTradeId: bundle.lastTradeId,
-    };
-    if (!shouldAcceptSeq(prev.chartSeq, next)) return;
-    if (hasGap(prev.chartSeq.lastTradeId, bundle.lastTradeId, bundle.trades[0]?.tradeId)) {
-      updateSlice(set, get, mint, { resyncFlag: prev.resyncFlag + 1 });
-      return;
-    }
-    if (!prev.isAtLiveEdge) {
-      updateSlice(set, get, mint, {
-        liveBuffer: [...prev.liveBuffer, bundle].slice(-MAX_LIVE_BUFFER),
-        chartSeq: next,
-        marketCap: bundle.marketCap,
-        regime: bundle.regime,
-      });
-      return;
-    }
-    updateSlice(set, get, mint, {
-      historicalCandles: patchCandlesFromBundle(prev.historicalCandles, bundle, prev.tf),
-      chartSeq: next,
-      marketCap: bundle.marketCap,
-      regime: bundle.regime,
-    });
-  },
-
-  setRegime: (mint, regime) => updateSlice(set, get, mint, { regime }),
-
-  flushLiveBuffer: (mint) => {
-    const prev = get().slices[mint] ?? emptySlice();
-    const buf = [...prev.liveBuffer];
-    if (!buf.length) return buf;
-    let candles = prev.historicalCandles;
-    let marketCap = prev.marketCap;
-    let chartSeq = prev.chartSeq;
-    let regime = prev.regime;
-    for (const b of buf) {
-      candles = patchCandlesFromBundle(candles, b, prev.tf);
-      marketCap = b.marketCap;
-      regime = b.regime;
-      chartSeq = { epoch: b.epoch, seq: b.seq, lastTradeId: b.lastTradeId };
-    }
-    updateSlice(set, get, mint, {
-      historicalCandles: candles,
-      liveBuffer: [],
-      marketCap,
-      chartSeq,
-      regime,
-      isAtLiveEdge: true,
-    });
-    return buf;
-  },
-
-  requestResync: (mint) =>
-    updateSlice(set, get, mint, (prev) => ({ resyncFlag: prev.resyncFlag + 1 })),
-
-  setWsConnected: (mint, wsConnected) => updateSlice(set, get, mint, { wsConnected }),
-}));
-
-/** Per-mint chart state — multiple charts can mount without clobbering each other. */
-export function useChartMint(mint: string) {
-  const slice = useChartStore((s) => s.slices[mint]);
-  return useMemo(() => {
-    const s = slice ?? emptySlice();
-    const api = useChartStore.getState();
+export function applyCommitBundle(
+  slice: ChartMintSlice,
+  bundle: CommitBundle,
+): ChartMintSlice {
+  if (slice.isAtLiveEdge) {
     return {
-      ...s,
-      resetMint: () => api.resetMint(mint),
-      setTf: (tf: ChartTimeframe) => api.setTf(mint, tf),
-      setAtLiveEdge: (v: boolean) => api.setAtLiveEdge(mint, v),
-      setHistorical: (candles: Candle[], oldestTradeId: string | null) =>
-        api.setHistorical(mint, candles, oldestTradeId),
-      prependHistorical: (older: Candle[], oldestTradeId: string | null) =>
-        api.prependHistorical(mint, older, oldestTradeId),
-      setUserTrades: (fills: UserTrade[]) => api.setUserTrades(mint, fills),
-      applySnapshot: (opts: Parameters<Store["applySnapshot"]>[1]) => api.applySnapshot(mint, opts),
-      applyBundle: (bundle: CommitBundle) => api.applyBundle(mint, bundle),
-      setRegime: (regime: PriceRegime) => api.setRegime(mint, regime),
-      flushLiveBuffer: () => api.flushLiveBuffer(mint),
-      requestResync: () => api.requestResync(mint),
-      setWsConnected: (v: boolean) => api.setWsConnected(mint, v),
+      ...slice,
+      historicalCandles: applyBundleToCandles(slice.historicalCandles, bundle, slice.tf),
+      marketCap: bundle.marketCap,
+      lastTradeId: bundle.lastTradeId,
+      regime: bundle.regime,
+      graduationAt: bundle.regimeSwitch?.graduationAt ?? slice.graduationAt,
+      chartSeq: { epoch: bundle.epoch, seq: bundle.seq },
     };
-  }, [mint, slice]);
+  }
+  const buf = [...slice.liveBuffer, bundle];
+  while (buf.length > MAX_LIVE_BUFFER) buf.shift();
+  return { ...slice, liveBuffer: buf };
 }
 
-export function fmtMcap(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
-  return `$${Math.round(v)}`;
+/** Parse a trade-id string to BigInt; non-numeric / empty → 0n. */
+function tradeIdBig(id: string | null | undefined): bigint {
+  if (!id) return 0n;
+  try {
+    return BigInt(id);
+  } catch {
+    return 0n;
+  }
 }
 
-export function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  const p = v * 100;
-  return `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
+/**
+ * T2.1 — snapshot-authority version guard (the "fixes don't stick" bug).
+ *
+ * A SYNC_SNAPSHOT is the worker's authoritative state at the moment it was built.
+ * But the client may have already advanced past it via COMMIT_BUNDLEs (or a REST
+ * correction). Applying a STALE snapshot then reverts the chart to older data —
+ * the user sees a fix land and then disappear seconds later.
+ *
+ * Monotonic version = (epoch, lastTradeId). Drop a snapshot that is not strictly
+ * newer than what we already hold:
+ *   - older epoch          → drop (stale; a newer epoch already reset us)
+ *   - same epoch, behind   → drop (we're already ahead via live bundles)
+ *   - newer epoch          → accept (authoritative reset, e.g. worker restart)
+ *   - same epoch, at/ahead → accept (legitimate sync/resync)
+ */
+export function applySyncSnapshot(slice: ChartMintSlice, snap: SyncSnapshot): ChartMintSlice {
+  const curEpoch = slice.chartSeq.epoch;
+  if (snap.epoch < curEpoch) return slice; // stale epoch — drop
+  if (snap.epoch === curEpoch && tradeIdBig(snap.lastTradeId) < tradeIdBig(slice.lastTradeId)) {
+    return slice; // same epoch but behind our live state — drop
+  }
+  return {
+    ...slice,
+    historicalCandles: mergeSnapshotTail(slice.historicalCandles, snap.candles),
+    marketCap: snap.marketCap,
+    regime: snap.regime,
+    graduationAt: snap.graduationAt ?? slice.graduationAt,
+    lastTradeId: snap.lastTradeId,
+    chartSeq: { epoch: snap.epoch, seq: 0 },
+    liveBuffer: [],
+    loading: false,
+  };
+}
+
+export function setHistoricalPage(
+  slice: ChartMintSlice,
+  page: { candles: Candle[]; oldestTradeId: string | null; hasMore: boolean },
+): ChartMintSlice {
+  return {
+    ...slice,
+    historicalCandles: page.candles,
+    oldestTradeId: page.oldestTradeId,
+    hasMore: page.hasMore,
+    loading: false,
+  };
+}
+
+export function prependHistoricalPage(
+  slice: ChartMintSlice,
+  page: { candles: Candle[]; oldestTradeId: string | null; hasMore: boolean },
+): ChartMintSlice {
+  return {
+    ...slice,
+    historicalCandles: mergeCandlePages(slice.historicalCandles, page.candles),
+    oldestTradeId: page.oldestTradeId ?? slice.oldestTradeId,
+    hasMore: page.hasMore,
+  };
+}
+
+export function setLiveEdge(slice: ChartMintSlice, atEdge: boolean): ChartMintSlice {
+  if (atEdge === slice.isAtLiveEdge) return slice;
+  if (atEdge) return flushLiveBuffer({ ...slice, isAtLiveEdge: true });
+  return { ...slice, isAtLiveEdge: false };
+}
+
+export function syncMarkers(
+  slice: ChartMintSlice,
+  userTrades: UserTrade[],
+): ChartMintSlice {
+  const ver = userTradesVersion(userTrades);
+  if (ver === slice.userTradesVersion) return slice;
+  return {
+    ...slice,
+    userTradesVersion: ver,
+    markersById: buildMarkers(userTrades, slice.tf),
+  };
+}
+
+/** Visible candle series: historical + buffered patches when off live edge. */
+export function visibleCandles(slice: ChartMintSlice): Candle[] {
+  if (slice.isAtLiveEdge || !slice.liveBuffer.length) return slice.historicalCandles;
+  let candles = slice.historicalCandles;
+  for (const b of slice.liveBuffer) {
+    candles = applyBundleToCandles(candles, b, slice.tf);
+  }
+  return candles;
 }
