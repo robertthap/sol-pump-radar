@@ -10,9 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here on purpose — pnpm/action-setup@v4 errors if the version
+      # is specified in two places. package.json's "packageManager": "pnpm@9.15.9"
+      # is the single source of truth.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
