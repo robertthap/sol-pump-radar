@@ -11,7 +11,9 @@ build
 .env.local
 .env.*.local
 
-data/
+# Anchored to the repo root: an unanchored `data/` also matched source dirs like
+# lib/chart/data/, silently excluding them from the repo (broke CI typecheck).
+/data/
 sessions/
 coverage/
 
