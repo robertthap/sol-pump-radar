@@ -8,7 +8,10 @@ const log = logger("worker-lock");
 // Stable advisory-lock key for "the single sol-pump-radar worker".
 // Constant int — do not change without bumping all running workers.
 // Postgres pg_advisory_lock takes either one int8 or two int4s; we use one int8.
-const ADVISORY_KEY = 0x5350525f57524e30; // ASCII "SPR_WRN0"
+/** Singleton advisory-lock key. Exported so `worker:unlock` filters pg_locks on
+ *  THIS key instead of terminating every advisory-lock holder in the database. */
+export const WORKER_ADVISORY_KEY = 0x5350525f57524e30; // ASCII "SPR_WRN0"
+const ADVISORY_KEY = WORKER_ADVISORY_KEY;
 
 let lockClient: PoolClient | null = null;
 

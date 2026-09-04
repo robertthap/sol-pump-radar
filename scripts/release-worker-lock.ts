@@ -6,8 +6,25 @@
  */
 import { bootDb, getPool } from "@/lib/db/client";
 import { fetchHeartbeats } from "@/lib/runtime/worker-heartbeat-db";
+import { WORKER_ADVISORY_KEY } from "@/lib/runtime/worker-lock";
+import { env } from "@/lib/env";
 
-const STALE_MS = 45_000;
+/**
+ * A worker is considered alive while any lane has beaten within this window.
+ * Sourced from WORKER_HEARTBEAT_TIMEOUT_MS so this script and
+ * /api/runtime/health cannot disagree about whether a worker is running — a
+ * hard-coded 45s here previously called a worker dead that health called alive.
+ */
+const STALE_MS = env().WORKER_HEARTBEAT_TIMEOUT_MS;
+
+/** Only advisory locks on OUR key, in OUR database. */
+const LOCK_FILTER = `
+  l.locktype = 'advisory'
+  AND l.objsubid = 1
+  AND ((l.classid::bigint << 32) | l.objid::bigint) = $1::bigint
+  AND a.datname = current_database()
+  AND l.pid <> pg_backend_pid()
+`;
 
 async function main() {
   await bootDb();
@@ -29,13 +46,13 @@ async function main() {
     return;
   }
 
-  const before = await pool.query<{ pid: number; state: string }>(`
-    SELECT l.pid, a.state
-    FROM pg_locks l
-    JOIN pg_stat_activity a ON a.pid = l.pid
-    WHERE l.locktype = 'advisory'
-      AND l.pid <> pg_backend_pid()
-  `);
+  const before = await pool.query<{ pid: number; state: string }>(
+    `SELECT l.pid, a.state
+     FROM pg_locks l
+     JOIN pg_stat_activity a ON a.pid = l.pid
+     WHERE ${LOCK_FILTER}`,
+    [WORKER_ADVISORY_KEY],
+  );
 
   if (before.rows.length === 0) {
     console.log("[worker:unlock] no advisory lock found — safe to run: pnpm worker");
@@ -43,7 +60,7 @@ async function main() {
     return;
   }
 
-  console.log("[worker:unlock] stale lock detected (no recent heartbeat). Clearing…");
+  console.log("[worker:unlock] stale lock detected (no recent heartbeat). Clearing our key only…");
   for (const row of before.rows) {
     console.log(`  pid=${row.pid} state=${row.state}`);
     const term = await pool.query<{ ok: boolean }>(
@@ -53,12 +70,13 @@ async function main() {
     console.log(`  terminated pid=${row.pid}: ${term.rows[0]?.ok ? "ok" : "failed"}`);
   }
 
-  const after = await pool.query<{ n: number }>(`
-    SELECT count(*)::int AS n
-    FROM pg_locks l
-    WHERE l.locktype = 'advisory'
-      AND l.pid <> pg_backend_pid()
-  `);
+  const after = await pool.query<{ n: number }>(
+    `SELECT count(*)::int AS n
+     FROM pg_locks l
+     JOIN pg_stat_activity a ON a.pid = l.pid
+     WHERE ${LOCK_FILTER}`,
+    [WORKER_ADVISORY_KEY],
+  );
 
   const remaining = after.rows[0]?.n ?? 0;
   if (remaining === 0) {
