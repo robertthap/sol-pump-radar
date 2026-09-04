@@ -7,9 +7,14 @@ import {
 } from "@/lib/intelligence/event-triggers";
 import type { IntelligenceInputSnapshot, TriggerEvent } from "@/lib/intelligence/types";
 
+import { BoundedMap } from "@/lib/shared/bounded-map";
+
 const DEFAULT_WINDOW_MS = 10_000;
 
-const priorSnapshots = new Map<string, IntelligenceInputSnapshot>();
+/** Bounded: this held one full snapshot per mint EVER scored, for the lifetime
+ *  of the worker. Only the most recent mints are ever compared against. */
+const PRIOR_SNAPSHOT_MAX = 2_000;
+const priorSnapshots = new BoundedMap<string, IntelligenceInputSnapshot>(PRIOR_SNAPSHOT_MAX);
 
 export function registerPriorSnapshot(mint: string, snap: IntelligenceInputSnapshot) {
   priorSnapshots.set(mint, snap);

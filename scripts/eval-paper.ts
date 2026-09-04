@@ -19,7 +19,8 @@ type Trade = {
   reason: string;
   tier: string;
   regime: string;
-  /** Token age (s) at entry — our reaction latency. Late entries = structural disadvantage. */
+  /** entry_age_seconds: min(token/flow age, queue wait) — a BLEND, not pure
+   *  reaction latency. See resolveTimingAgeSeconds. Kept for comparability. */
   ageSec: number | null;
 };
 
@@ -168,7 +169,7 @@ async function main() {
 
     // Reaction latency (A5): if late entries systematically lose, that's a
     // structural signal — the coins moved before we arrived.
-    console.log("\n--- By entry age (reaction latency) ---");
+    console.log("\n--- By entry age (blend: token age or queue wait) ---");
     const ageOrder = ["age:<10s", "age:10-60s", "age:1-5m", "age:5-30m", "age:>30m", "age:unknown"];
     const byAge = groupBy(trades, (t) => ageBucket(t.ageSec));
     for (const k of ageOrder) {

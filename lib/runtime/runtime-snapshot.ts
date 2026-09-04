@@ -84,11 +84,28 @@ export async function captureRuntimeSnapshot(): Promise<void> {
     stats.lastMessageAt != null ? Math.round((now - stats.lastMessageAt) / 1000) : null;
 
   const payload = {
+    // Cross-process publication of the WORKER's ingest counters. The web tier
+    // cannot see them any other way: getIngestorStats() reads a per-process
+    // global and the ingestor lives here, so /api/stats/ingestor previously
+    // served its own empty zeroes as if they were worker state.
     ingest: {
       drops1h: null as number | null,
       lastEventAgeSec,
       queueMax: e.MAX_INGEST_QUEUE,
       connState: stats.connState,
+      endpoint: stats.endpoint, // already redacted at the source (ws-manager)
+      signaturesSeen: stats.signaturesSeen,
+      eventsParsed: stats.eventsParsed,
+      eventsInserted: stats.eventsInserted,
+      eventsDropped: stats.eventsDropped,
+      decodeErrors: stats.decodeErrors,
+      reconnects: stats.reconnects,
+      queueDepthMax: stats.bufferDepthMax,
+      decodeMsMax: stats.decodeMsMax,
+      flushMsLast: stats.flushMsLast,
+      flushMsMax: stats.flushMsMax,
+      flushes: stats.flushes,
+      lastError: stats.lastError,
     },
     workers: { staleHeartbeatCount: c.stale_hb },
     sessions: session

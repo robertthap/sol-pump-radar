@@ -1,4 +1,9 @@
 import "server-only";
+import {
+  buildWorkerIngestStats,
+  type WorkerIngestStats,
+} from "@/lib/runtime/worker-ingest-stats";
+export { INGEST_SNAPSHOT_STALE_MS, type WorkerIngestStats } from "@/lib/runtime/worker-ingest-stats";
 
 import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
@@ -50,6 +55,23 @@ export async function fetchLatestRuntimeSnapshotPayload(): Promise<Record<string
     );
   } catch {
     return null;
+  }
+}
+
+export async function fetchWorkerIngestStats(): Promise<WorkerIngestStats> {
+  try {
+    const res = await getDb().execute(sql`
+      SELECT captured_at,
+             EXTRACT(EPOCH FROM (now() - captured_at)) * 1000 AS age_ms,
+             payload->'ingest' AS ingest
+      FROM runtime_snapshots ORDER BY captured_at DESC LIMIT 1
+    `);
+    const row = (res as unknown as {
+      rows: Array<{ captured_at: string; age_ms: string | number; ingest: Record<string, unknown> | null }>;
+    }).rows[0];
+    return buildWorkerIngestStats(row);
+  } catch {
+    return { workerState: "unavailable", ageSec: null, capturedAt: null, ingest: null };
   }
 }
 

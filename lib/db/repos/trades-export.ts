@@ -22,10 +22,26 @@ export type ExportTradeRow = {
   dry_run: boolean;
 };
 
+/** Hard ceiling so a full-history export cannot materialise the whole ledger. */
+export const MAX_EXPORT_ROWS = 50_000;
+export const DEFAULT_EXPORT_ROWS = 10_000;
+
+/**
+ * The per-source cap actually applied. Exported so a caller can report the
+ * limit it was subject to — a CSV body carries no metadata, so without this the
+ * caller cannot tell a complete export from one that stopped at the cap.
+ */
+export function clampExportLimit(limit?: number): number {
+  return Math.min(MAX_EXPORT_ROWS, Math.max(1, Math.floor(limit ?? DEFAULT_EXPORT_ROWS)));
+}
+
 export async function fetchExportTradeRows(opts: {
   source: "paper" | "live" | "all";
   status: "open" | "closed" | "all";
+  /** Per-source row cap. Clamped to [1, MAX_EXPORT_ROWS]. */
+  limit?: number;
 }): Promise<ExportTradeRow[]> {
+  const limit = clampExportLimit(opts.limit);
   const wantPaper = opts.source === "all" || opts.source === "paper";
   const wantLive = opts.source === "all" || opts.source === "live";
   const statusFilter =
@@ -57,6 +73,7 @@ export async function fetchExportTradeRows(opts: {
       FROM ${sql.raw(PAPER_TRADES_READ)}
       WHERE ${statusFilter}
       ORDER BY opened_at DESC
+      LIMIT ${sql.raw(String(limit))}
     `);
     rows.push(...(r as unknown as { rows: ExportTradeRow[] }).rows);
   }
@@ -81,6 +98,7 @@ export async function fetchExportTradeRows(opts: {
       FROM live_trades
       WHERE ${statusFilter}
       ORDER BY opened_at DESC
+      LIMIT ${sql.raw(String(limit))}
     `);
     rows.push(...(r as unknown as { rows: ExportTradeRow[] }).rows);
   }

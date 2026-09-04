@@ -13,6 +13,21 @@ export type IngestorStats = {
   eventsParsed: number;
   eventsInserted: number;
   decodeErrors: number;
+  /** Events dropped because the ingest buffer hit MAX_INGEST_QUEUE. Silent data
+   *  loss until now: this was a closure-local counter the diagnostics endpoints
+   *  could not see, so a slow Postgres shed events invisibly. */
+  eventsDropped: number;
+  /** received -> decoded: Borsh decode cost in the WS callback (ms). */
+  decodeMsLast: number;
+  decodeMsMax: number;
+  /** decoded -> persisted: full flush chain duration (ms). Rising values here are
+   *  what push the buffer toward MAX_INGEST_QUEUE and cause silent drops. */
+  flushMsLast: number;
+  flushMsMax: number;
+  flushes: number;
+  /** High-water mark of the in-memory buffer vs MAX_INGEST_QUEUE. */
+  bufferDepthMax: number;
+  bufferCapacity: number;
   lastError: string | null;
   bySecond: number[];
 };
@@ -37,6 +52,14 @@ export function getIngestorStats(): IngestorStats {
       eventsParsed: 0,
       eventsInserted: 0,
       decodeErrors: 0,
+      eventsDropped: 0,
+      decodeMsLast: 0,
+      decodeMsMax: 0,
+      flushMsLast: 0,
+      flushMsMax: 0,
+      flushes: 0,
+      bufferDepthMax: 0,
+      bufferCapacity: 0,
       lastError: null,
       bySecond: new Array(BUCKETS).fill(0),
     };

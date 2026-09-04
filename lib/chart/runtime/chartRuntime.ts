@@ -1,4 +1,5 @@
 import "server-only";
+import { BoundedMap, BoundedSet } from "@/lib/shared/bounded-map";
 
 import type { ChartTimeframe, CommitBundle, SyncSnapshot, Candle, PriceRegime } from "@/lib/chart/types";
 import { DEFAULT_CHART_TF, CHECKPOINT_CANDLE_COUNT, CHECKPOINT_TRADE_INTERVAL, PUMP_SUPPLY, TF_MS } from "@/lib/chart/constants";
@@ -26,8 +27,25 @@ type BroadcastFn = (mint: string, msg: WsEnvelope) => void;
 let pipeline: CommitPipeline | null = null;
 let cache: ChartMintCache | null = null;
 let broadcast: BroadcastFn = () => {};
-const tradeCounters = new Map<string, number>();
-const epochBumpedMints = new Set<string>();
+// Bounded: both grew one entry per mint for the worker's lifetime.
+//
+// BOUNDED SEMANTICS — what eviction can and cannot cost.
+// Both are chart-stream bookkeeping only. `epochBumpedMints` is a once-per-boot
+// dedup marker for the epoch bump below; `tradeCounters` paces checkpoint
+// writes. Past CHART_MINT_MAX distinct mints in one worker lifetime the oldest
+// markers are evicted, so a long-idle mint that becomes active again can be
+// epoch-bumped a second time, or have its checkpoint counter restart.
+//
+// Blast radius is one chart resync: `epoch` is written only to
+// chart_stream_state / chart_candle_checkpoints and read only by the chart
+// client's monotonic (epoch, lastTradeId) check, which treats a newer epoch as
+// an authoritative reset. Nothing in the trade path, position state, safety
+// controls, PnL or ingestion reads it — grep `epoch` outside lib/chart/ returns
+// only the schema definitions. A redundant bump therefore costs a snapshot
+// refetch for viewers of that one chart, never a trading decision.
+const CHART_MINT_MAX = 5_000;
+const tradeCounters = new BoundedMap<string, number>(CHART_MINT_MAX);
+const epochBumpedMints = new BoundedSet<string>(CHART_MINT_MAX);
 
 async function bumpEpochOnWorkerBoot(mint: string, stream: StreamStateRow): Promise<StreamStateRow> {
   if (process.env.WORKERS !== "on") return stream;
@@ -139,7 +157,8 @@ function mcapOf(candles: Candle[]): number {
 // per mint+tf. Built from DB trades deterministically so every endpoint returns
 // identical data. Returns ALL curve candles; the caller trims to the period
 // before Gecko's earliest candle.
-const curveCandlesCache = new Map<string, Candle[]>();
+// Bounded: candle arrays per (mint,timeframe), previously never evicted.
+const curveCandlesCache = new BoundedMap<string, Candle[]>(500);
 
 async function getCurveCandlesCached(
   mint: string,

@@ -60,6 +60,7 @@ export async function startIngestor() {
     if (flushing) return;
     if (buffer.length === 0) return;
     flushing = true;
+    const flushStartedAt = Date.now();
     const batch = buffer.splice(0, Math.min(buffer.length, 500));
     try {
       // Core ingest truth first — audit/launch paths must not block event inserts.
@@ -105,6 +106,13 @@ export async function startIngestor() {
       stats.lastError = "flush: " + String(e);
       log.error("flush error", { err: String(e) });
     } finally {
+      // decoded -> persisted (T1 -> T2). The whole chain is serialized behind
+      // `flushing`, so this duration is exactly what backs the buffer up.
+      const flushMs = Date.now() - flushStartedAt;
+      stats.flushMsLast = flushMs;
+      if (flushMs > stats.flushMsMax) stats.flushMsMax = flushMs;
+      stats.flushes += 1;
+      stats.bufferCapacity = MAX_BUFFER;
       flushing = false;
       if (buffer.length > 0) scheduleFlush();
     }
@@ -255,6 +263,7 @@ export async function startIngestor() {
       hwmTs = new Date();
     }
     let parsed: ParsedPumpEvent[];
+    const receivedAt = Date.now();
     try {
       // Live WS gives us no chain blockTime — the fallback is our receive clock.
       parsed = parseProgramLogs(
@@ -266,9 +275,15 @@ export async function startIngestor() {
       return;
     }
     if (parsed.length === 0) return;
+    // received -> decoded (T0 -> T1).
+    const decodeMs = Date.now() - receivedAt;
+    stats.decodeMsLast = decodeMs;
+    if (decodeMs > stats.decodeMsMax) stats.decodeMsMax = decodeMs;
     stats.eventsParsed += parsed.length;
     if (buffer.length + parsed.length > MAX_BUFFER) {
       droppedFromOverflow += parsed.length;
+      // Mirror onto the shared stats object so /api/stats/ingestor can SEE the loss.
+      stats.eventsDropped = droppedFromOverflow;
       droppedSinceAudit += parsed.length;
       if (droppedSinceAudit >= DROP_AUDIT_BATCH) {
         const batchSize = droppedSinceAudit;
@@ -289,6 +304,7 @@ export async function startIngestor() {
       return;
     }
     buffer.push(...parsed);
+    if (buffer.length > stats.bufferDepthMax) stats.bufferDepthMax = buffer.length;
     if (buffer.length >= FLUSH_BATCH_SIZE) flush();
     else scheduleFlush();
   }, (info) => {
@@ -396,6 +412,11 @@ export async function startIngestor() {
       sigs: stats.signaturesSeen,
       parsed: stats.eventsParsed,
       inserted: stats.eventsInserted,
+      dropped: stats.eventsDropped,
+      decodeMsMax: stats.decodeMsMax,
+      flushMsLast: stats.flushMsLast,
+      flushMsMax: stats.flushMsMax,
+      bufferDepthMax: `${stats.bufferDepthMax}/${MAX_BUFFER}`,
       reconnects: stats.reconnects,
       sigsPerSecAvg: (stats.signaturesSeen / uptimeSec).toFixed(2),
     });

@@ -368,23 +368,78 @@ async function fetchClosedPaperAgg(extraFilter: ReturnType<typeof sql>, hours?: 
   return mapClosedPaperAgg((res as unknown as { rows: ClosedPaperAggRow[] }).rows[0]);
 }
 
-/** Reaction time = token age (s) at entry for auto trades (L0.2). Lower = faster. */
-export async function fetchEntryReaction(
-  hours = 168,
-): Promise<{ n: number; p50: number | null; p95: number | null }> {
+export type LatencyPercentiles = {
+  n: number;
+  p50: number | null;
+  p90: number | null;
+  p95: number | null;
+  p99: number | null;
+  max: number | null;
+};
+
+/**
+ * Percentiles over a numeric entry_features key for closed auto trades.
+ *
+ * Only p50/p95 existed before, and only for reaction time — so there was no way
+ * to see a latency tail at all. p90/p99/max are additive; existing callers that
+ * read p50/p95 are unaffected.
+ */
+async function entryFeaturePercentiles(key: string, hours: number): Promise<LatencyPercentiles> {
+  const expr = sql`(entry_features->>${key})::float8`;
   const res = await getDb().execute(sql`
     SELECT
       COUNT(*)::int AS n,
-      percentile_cont(0.5) WITHIN GROUP (ORDER BY (entry_features->>'entry_age_seconds')::float8) AS p50,
-      percentile_cont(0.95) WITHIN GROUP (ORDER BY (entry_features->>'entry_age_seconds')::float8) AS p95
+      percentile_cont(0.5)  WITHIN GROUP (ORDER BY ${expr}) AS p50,
+      percentile_cont(0.9)  WITHIN GROUP (ORDER BY ${expr}) AS p90,
+      percentile_cont(0.95) WITHIN GROUP (ORDER BY ${expr}) AS p95,
+      percentile_cont(0.99) WITHIN GROUP (ORDER BY ${expr}) AS p99,
+      MAX(${expr})                                          AS max
     FROM ${sql.raw(PAPER_TRADES_READ)}
     WHERE status = 'closed'
-      AND entry_features ? 'entry_age_seconds'
+      AND entry_features ? ${key}
       AND entry_features->>'auto' = 'true'
       AND closed_at > now() - (${sql.raw(String(hours))} || ' hours')::interval
   `);
-  const r = (res as unknown as { rows: Array<{ n: number; p50: number | null; p95: number | null }> }).rows[0];
-  return { n: r?.n ?? 0, p50: r?.p50 ?? null, p95: r?.p95 ?? null };
+  const r = (res as unknown as { rows: Array<LatencyPercentiles> }).rows[0];
+  return {
+    n: r?.n ?? 0,
+    p50: r?.p50 ?? null,
+    p90: r?.p90 ?? null,
+    p95: r?.p95 ?? null,
+    p99: r?.p99 ?? null,
+    max: r?.max ?? null,
+  };
+}
+
+/**
+ * Entry-age percentiles (seconds) for auto trades.
+ *
+ * NOT a clean reaction latency: the underlying `entry_age_seconds` is
+ * min(flowAge, decisionAge) and degrades to pending-queue wait once a token is
+ * older than the timing gate (see resolveTimingAgeSeconds). Retained for the
+ * timing gate and historical comparability; prefer fetchDecisionToIntent() when
+ * you want decision->execution latency.
+ */
+export async function fetchEntryReaction(hours = 168): Promise<LatencyPercentiles> {
+  return entryFeaturePercentiles("entry_age_seconds", hours);
+}
+
+/**
+ * Execution-stage latency (ms) = fill time minus TradeIntent creation, stamped by
+ * the execution seam as exec_latency_ms. Covers regular paper opens only — the
+ * genesis, shadow and live paths bypass the seam, so their trades are absent.
+ */
+export async function fetchExecLatency(hours = 168): Promise<LatencyPercentiles> {
+  return entryFeaturePercentiles("exec_latency_ms", hours);
+}
+
+/**
+ * Queue wait (ms) between a decision being committed and the auto-trader tick
+ * turning it into a TradeIntent. Bounded below by the 3s tick, so this mostly
+ * measures how long candidates sit in the pending-buy queue.
+ */
+export async function fetchDecisionToIntent(hours = 168): Promise<LatencyPercentiles> {
+  return entryFeaturePercentiles("decision_to_intent_ms", hours);
 }
 
 /** Auto-trader paper trades for a given entry tier (strict|relaxed). */

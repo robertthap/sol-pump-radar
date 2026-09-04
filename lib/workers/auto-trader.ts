@@ -1360,7 +1360,10 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
         smartMoneyCount: insider.smartMoneyCount,
         insiderBoost: qual.insiderBoost,
         entry_tier: entryTier,
-        // L0.2: token age (seconds) at entry — our reaction time. Lower = faster.
+        // L0.2. NOTE: this is min(flowAge, decisionAge) and degrades to the
+        // pending-queue wait for tokens older than the timing gate — it is a
+        // blend, not pure reaction latency (see resolveTimingAgeSeconds).
+        // `decision_to_intent_ms` below is the unambiguous queue-latency metric.
         entry_age_seconds: timingAge ?? null,
         // DexScreener 5m order-flow at entry — the momentum signal for DEX coins
         // (logged so the learner can mine which values actually precede winners).
@@ -1387,6 +1390,14 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
         regime: getCurrentRegime().regime,
         createdAtMs: Date.now(),
       };
+      // decision -> execution (T2 -> T3): how long the committed decision sat in
+      // the pending queue before this tick picked it up and built an intent.
+      // Combined with exec_latency_ms (intent -> fill) this closes the trade-side
+      // half of the received/decoded/decision/execution chain.
+      const decisionTsMs = Date.parse(d.ts);
+      if (Number.isFinite(decisionTsMs)) {
+        entryFeatures.decision_to_intent_ms = Math.max(0, intent.createdAtMs - decisionTsMs);
+      }
       const plan = buildExecutionPlan(intent, {
         route: "paper",
         expectedPriceSol: v,

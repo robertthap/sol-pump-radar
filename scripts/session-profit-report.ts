@@ -56,7 +56,7 @@ async function main() {
   console.log("Overall");
   printOverall("auto (7d)", overall);
   console.log(
-    `  reaction time (token age at entry): p50=${reaction.p50 == null ? "—" : Math.round(reaction.p50) + "s"} ` +
+    `  entry age (blend, not pure reaction): p50=${reaction.p50 == null ? "—" : Math.round(reaction.p50) + "s"} ` +
       `p95=${reaction.p95 == null ? "—" : Math.round(reaction.p95) + "s"}  (n=${reaction.n})`,
   );
   if (overall.trades === 0) {
