@@ -1,0 +1,72 @@
+# Codebase cleanup register
+
+Status: **CURRENT**. Output of the Phase 0 audit and the Group 1–3 hardening pass.
+
+Nothing in this register has been deleted. Per the audit's protection rule, items that look
+dead are **documented here** rather than removed, because several turned out to be deliberate
+reservations or future wiring rather than accidents.
+
+---
+
+## Built but not wired
+
+| Item | File | Why it is not dead | Action |
+|---|---|---|---|
+| `fast-lane` | `lib/intelligence/fast-lane.ts` | Pure, tested core (`shouldFastLaneFire` + `FastLaneQueue`). Its docstring claims an env gate `FAST_LANE=on`, but **that key does not exist in `lib/env.ts`** — the gate is unreachable, not merely off. Nothing imports it except its own test. | KEEP. Wiring it is a latency project, out of scope. |
+| `mode-authority` | `lib/runtime/mode-authority.ts` | Complete two-phase demo⇄real commit with replay guard, staleness guard and confirm-phrase gating, plus tests. **No production caller.** The real switch is a bare `setUiTradingMode` (`web-command-listener.ts:132`) with none of those guards. | KEEP. Wire at the live-trading phase. |
+| `write-queue` | `lib/db/write-queue.ts` | 24-line passthrough; its own docstring says it is retained only to keep diagnostics endpoints stable. There is **no** async write queue, no retries, no backpressure. | KEEP as-is; do not mistake it for a queue. |
+| `dead_letters` table | `lib/db/schema/ops.ts:24` | Schema + index exist; **zero writers and zero readers** repo-wide. `SYSTEM_DESIGN.md:233` listed it as live infrastructure — that doc line was stale. | KEEP table; **doc corrected** (`SYSTEM_DESIGN.md:233,702` now mark it reserved). |
+| `ABLATION_VARIANT` / `ABLATION_MODE` | `lib/env.ts:158-159` | Validated but never read. The docblock says *"The live switch is reserved; default off"* — a deliberate reservation. | KEEP. Do **not** delete. |
+| `@spr/core` trade FSM / `trades_fsm` | `packages/core` | Intentionally unwired; `PROJECT_STATUS.md` records the decision that row-state recovery won. | KEEP. |
+| PumpSwap on-chain timestamp | `lib/pump/pumpswap-parser.ts:57` | `decodeSwap` reads the event's own `i64` timestamp and discards it (`r.i64(); // timestamp`), then uses the caller clock. Swaps are therefore truthfully labelled `ts_source='local'`. | Candidate: use the real value to upgrade swap provenance to `chain`. Changes stored `blockTime` **values**, so it needs its own change. |
+
+---
+
+## Corrected audit findings
+
+Items I flagged during the audit that did **not** survive verification. Recorded so they are
+not re-flagged.
+
+| Claim | Verdict | Evidence |
+|---|---|---|
+| Auto-trader queries the wrong PnL column (`pnl_sol`) | **FALSE** | `auto-trader.ts:131,301` correctly use `realized_pnl_sol` on `paper_positions`; `:311` correctly uses `pnl_sol` on `live_trades`, which really has that column. `pnl_sol` is also a legitimate alias inside `PAPER_TRADES_READ` (`paper-read.ts:22`). A blanket rename would **break** the live path and the analytics repos. |
+| Live exits evaluate TP before SL — a priority bug | **UNREACHABLE** | `start/route.ts:42,45` enforce `takeProfitPct > 0` and `0 < stopLossPct < 1`, so `pct >= tpPct` and `pct <= -slPct` are mutually exclusive. The ordering can never change an outcome. Not changed — editing real-money code for a non-bug is a net negative. |
+| `chartCache` LRU `continue`-after-`shift()` is a bug | **BY DESIGN** | The `continue` protects entries active within 10 minutes from eviction. `MAX_WARM_MINTS` is therefore a *soft* cap; the real bound is the 10-minute idle window, reclaimed by `evictCold()` on the chart-reconcile lane. Forcing eviction of hot entries would cause chart re-fetch churn. Not changed. |
+| Control arm records weaker staleness — contamination | **OVERSTATED** | The control arm carries no DEX features, so `dex_stale` would flag data it does not hold. Both arms already recorded the `sol_price_*` flags that matter. Unified anyway via `snapshotStaleFlags()` for shape parity, but as hygiene, not a contamination fix. |
+| `events` table holds ~2.9 M rows | **STALE** | Live table holds ~20 k. `EVENT_RETENTION_DAYS=7` prunes it; 2.9 M is what a June *dump* contains. This materially lowers the severity of the unbounded-query findings below. |
+
+---
+
+## Fixed in this pass
+
+| Item | Fix |
+|---|---|
+| `ts_source` labelled local timestamps as `chain` | Provenance decided in the parser where the fallback happens, carried on `ParsedPumpEvent`, read verbatim by `eventToRow`. `parseProgramLogs`/`parseSwapLogs` default to `"local"` (fail-closed). |
+| Two `EXTRACT(EPOCH …)` sites returned strings | `::float8` added (`engine-a-baseline.ts:170`, `engine-b-compare.ts:73`). |
+| `restore-test.ps1` passed a schema-only dump | `TryParse` now writes to a real variable; 0 rows fails. |
+| No final halt gate before paper execution | `haltedNow()` immediately before both `executePaperBuy` sites; fails closed if the breaker cannot be read. |
+| HALT retired the session before exits ran | Final `handleExits()` pass before `stopSession()`. |
+| `quick-start` could create a live session without the full gate | Requires `isLiveAllowed()`. |
+| `prepare-sell` bypassed breaker + live confirm | Calls `assertLiveExecutionAllowed()`. |
+| `LIVE_DRY_RUN=on` still built a signable Phantom tx | Refuses to build one. |
+| `worker:unlock` terminated every advisory-lock holder | Filters on our key in our database; staleness from `WORKER_HEARTBEAT_TIMEOUT_MS`. |
+| `wallet/create` + `wallet/import` ungated | Behind `WEB_WALLET_SESSION`, matching unlock/lock/wipe/status. |
+| Silent ingest data loss | `eventsDropped` on `IngestorStats`, `/api/stats/ingestor` and the periodic log. |
+| Four caches with no eviction | `BoundedMap`/`BoundedSet` applied to `priorSnapshots` (2,000), `tradeCounters`/`epochBumpedMints` (5,000), `curveCandlesCache` (500). |
+| `/api/trades/export` unbounded | Per-source `LIMIT`, clamped to 50,000, default 10,000. |
+| `quality.ts` ignored the runtime signal-mode override | Accepts an explicit `signalMode`; all 5 server call sites pass `getEffectiveSignalMode()`. |
+| Only p50/p95, only on reaction time | p50/p90/p95/p99/max, plus an `execLatency` companion, exposed on `/api/auto/session-insights`. |
+
+---
+
+## Open, not addressed
+
+| Item | Why deferred |
+|---|---|
+| Live/paper exit parity (trailing stop, stagnation, `markPnl`) | Needs peak persistence on `live_trades`, which has no `entry_features` updater — new write surface on the real-money ledger. Missing trail makes live exit *earlier*, i.e. conservative, so it is a fidelity gap not a hazard. |
+| Live stale-price hang (`current == null` → `continue`) | The paper fix force-closes at last mark; that is pure bookkeeping. A live position is real tokens on-chain, so marking it closed without selling desyncs ledger from chain. Suggested path: flag via the existing `markLivePositionCloseFailed` / `fetchLivePositionsNeedingAttention` mechanism. **Needs an operator decision.** |
+| `/api/backtest/run` N+1 | Up to 8,000 sequential `events` queries per request, no auth, no rate limit (`lib/backtest/runner.ts:361`). Lower severity now that `events` is ~20 k rows, but still unguarded. |
+| Full stage telemetry (T0–T9) | `receivedAt`/`decodedAt` are not carried to trade time; plumbing them crosses the ingest→commit→trade boundary. `ts_source` (this pass) is a prerequisite for trusting any of it. |
+| Migrations have no `down` | Recovery is restore-from-dump, which `safe-migrate.ps1` supports properly. |
+| `runMigrations` has no advisory lock | Every API route calls `bootDb()`, so the web tier is also a migration runner; `already exists` errors are swallowed. `pnpm build` is safe; `pnpm dev`/`start` concurrent with the worker are not. |
+| `confirm-live` trusts client-reported size | `sizeSol`/`entryVSol` from the request body are written to the live ledger without on-chain reconciliation. Live-phase work. |

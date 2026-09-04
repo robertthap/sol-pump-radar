@@ -230,7 +230,7 @@ Schema lives in `lib/db/schema/*.ts` (20 files); repos in `lib/db/repos/*.ts` (2
 - **Bots / clustering:** `mint_bot_flags` (bundle/sniper/bump/mechanicalUptrend), `wallet_profiles` (t_stat/avg_return/sniper_rate/bundle_rate/is_bump_bot), `clusters`/`cluster_members`/`wallet_edges`, `rug_labels`
 - **Learning / tuning:** `loss_postmortems`, `learned_rules`, `tuner_changes`
 - **Chart:** `chart_stream_state`, `mint_dex_quotes`, `chart_candle_checkpoints`
-- **Runtime / ops:** `domain_events` (command bus + durable event log), `user_settings`, `wallets_local`, `notifications`, `cb_events`, `rpc_health`, `dead_letters`
+- **Runtime / ops:** `domain_events` (command bus + durable event log), `user_settings`, `wallets_local`, `notifications`, `cb_events`, `rpc_health`, `dead_letters` (**reserved — schema only; no writer and no reader exist**, see `docs/codebase-cleanup.md`)
 
 `PAPER_TRADES_READ` is a SQL view over `paper_positions` (entry_price=entry_v_sol, current_price, stop_loss, take_profit, close_reason=exit_reason) used by read APIs.
 
@@ -699,7 +699,7 @@ Two table families coexist:
 
 ### 26.8 Runtime / ops
 
-**`domain_events`** — *the command bus + durable event log* (`+ session_id, correlation_id`). Wire types `*_REQUESTED` / `*_COMPLETED` / `*_RECORDED` / `*_REJECTED`. **`user_settings`** — `key(PK), value, updated_at` (UI mode, signal mode, trade-size overrides). **`wallets_local`** — `id, created_at, updated_at, label('main'), public_key(unique), encrypted_secret(AES-256-GCM), source`. **`rpc_health`** — `endpoint(PK), kind, last_checked_at, p50/p95_latency_ms, error_rate_5m, rate_limited_count, cooldown_until, is_healthy`. **`dead_letters`** — `id, ts, queue, job_name, attempts, error, payload`. Plus **`notifications`**, **`cb_events`** (circuit breaker history).
+**`domain_events`** — *the command bus + durable event log* (`+ session_id, correlation_id`). Wire types `*_REQUESTED` / `*_COMPLETED` / `*_RECORDED` / `*_REJECTED`. **`user_settings`** — `key(PK), value, updated_at` (UI mode, signal mode, trade-size overrides). **`wallets_local`** — `id, created_at, updated_at, label('main'), public_key(unique), encrypted_secret(AES-256-GCM), source`. **`rpc_health`** — `endpoint(PK), kind, last_checked_at, p50/p95_latency_ms, error_rate_5m, rate_limited_count, cooldown_until, is_healthy`. **`dead_letters`** — `id, ts, queue, job_name, attempts, error, payload`. Reserved: the table and its index exist, but nothing writes to or reads from it — failed work is not currently captured here. Plus **`notifications`**, **`cb_events`** (circuit breaker history).
 
 ---
 

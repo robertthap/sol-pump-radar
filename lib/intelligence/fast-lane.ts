@@ -12,9 +12,12 @@
  *   HOT  : event → shouldFastLaneFire → enqueue → executor (target <100ms)
  *   AUDIT: async batched writes to decision_log / domain_events
  *
- * This module is the pure, tested core (decision + dedup + bounded queue). Wiring
- * it to the live ingestor/executor is gated by env `FAST_LANE=on` (default off)
- * so the verified auto-trader path is untouched until the live latency check runs.
+ * This module is the pure, tested core (decision + dedup + bounded queue) and is
+ * NOT wired to anything: nothing imports it outside its own test, and the
+ * `FAST_LANE` env key this docstring once claimed as its gate does not exist in
+ * `lib/env.ts`. Wiring it means adding that key, then connecting HOT (ingestor →
+ * enqueue → executor) with the audit write async — a latency project with its own
+ * live check. Until then the verified auto-trader path is the only entry path.
  */
 import {
   scoreLaunchVelocity,
