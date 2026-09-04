@@ -1,4 +1,5 @@
 import { env } from "./env";
+import { redactSecretsInString } from "./shared/redact";
 
 type Level = "debug" | "info" | "warn" | "error";
 const order: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
@@ -13,7 +14,9 @@ function redact(value: unknown): unknown {
     if (value.length >= 32 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(value)) {
       return value.slice(0, 4) + "..." + value.slice(-4);
     }
-    return value;
+    // Key-name redaction misses a credential carried in an innocuously-named
+    // field (the RPC endpoint was logged as `url`), so scrub the value too.
+    return redactSecretsInString(value);
   }
   if (Array.isArray(value)) return value.map(redact);
   if (typeof value === "object") {
@@ -32,7 +35,7 @@ function emit(level: Level, scope: string, msg: string, extra?: unknown) {
     t: new Date().toISOString(),
     lvl: level,
     scope,
-    msg,
+    msg: redactSecretsInString(msg),
     ...(extra ? { extra: redact(extra) } : {}),
   };
   const fn = level === "error" ? console.error : level === "warn" ? console.warn : console.log;

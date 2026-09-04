@@ -1,4 +1,5 @@
 import "server-only";
+import { redactEndpoint, redactSecretsInString } from "@/lib/shared/redact";
 import WebSocket, { type RawData } from "ws";
 import { logger } from "@/lib/log";
 import { getIngestorStats } from "./stats";
@@ -90,9 +91,12 @@ export class WsLogsSubscriber {
     if (this.stopped) return;
     const url = this.endpoint();
     const stats = getIngestorStats();
-    stats.endpoint = url;
+    // Store the REDACTED form: stats.endpoint is read by the periodic stats log
+    // and served over /api/stats/ingestor, so keeping the credential here would
+    // leak it to both. The live `url` below is the un-redacted one.
+    stats.endpoint = redactEndpoint(url);
     stats.connState = "connecting";
-    log.info("connecting", { url });
+    log.info("connecting", { url: stats.endpoint });
 
     let ws: WebSocket;
     try {
@@ -106,8 +110,9 @@ export class WsLogsSubscriber {
     ws.on("open", () => this.onOpen(ws));
     ws.on("message", (data) => this.onMessage(data));
     ws.on("error", (err) => {
-      stats.lastError = String(err);
-      log.warn("ws error", { err: String(err) });
+      // Transport errors frequently embed the endpoint they failed on.
+      stats.lastError = redactSecretsInString(String(err));
+      log.warn("ws error", { err: stats.lastError });
     });
     ws.on("close", (code, reason) => this.onClose(code, reason?.toString()));
   }
