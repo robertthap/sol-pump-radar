@@ -2,7 +2,7 @@ import "server-only";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { events } from "@/lib/db/schema";
-import { normalizeBlockTimeSec, type ParsedPumpEvent } from "@/lib/pump/parser";
+import type { BlockTimeSource, ParsedPumpEvent } from "@/lib/pump/parser";
 import { logger } from "@/lib/log";
 
 export type EventKindFilter = "create" | "trade" | "buy" | "sell" | "migrate" | "all";
@@ -10,8 +10,11 @@ export type EventKindFilter = "create" | "trade" | "buy" | "sell" | "migrate" | 
 const log = logger("repo:events");
 
 function eventToRow(e: ParsedPumpEvent) {
-  const sec = normalizeBlockTimeSec(e.blockTime, Math.floor(Date.now() / 1000));
-  const ts = new Date(sec * 1000);
+  // The parser already resolved the timestamp AND recorded where it came from.
+  // Re-classifying here would look at an already-substituted value and call a
+  // local fallback "chain" just because the number looks plausible.
+  const tsSource = e.tsSource;
+  const ts = new Date(e.blockTime * 1000);
   if (!Number.isFinite(ts.getTime())) {
     throw new RangeError(`Invalid event time for ${e.signature}`);
   }
@@ -31,6 +34,7 @@ function eventToRow(e: ParsedPumpEvent) {
         tokenAmount: e.tokenAmount,
         vSolAfter: e.vSolAfter,
         program: "pumpfun",
+        tsSource,
         raw: null,
       };
     case "create":
@@ -47,6 +51,7 @@ function eventToRow(e: ParsedPumpEvent) {
         tokenAmount: null,
         vSolAfter: null,
         program: "pumpfun",
+        tsSource,
         raw: { name: e.name, symbol: e.symbol, uri: e.uri, bondingCurve: e.bondingCurve },
       };
     case "migrate":
@@ -63,6 +68,7 @@ function eventToRow(e: ParsedPumpEvent) {
         tokenAmount: null,
         vSolAfter: null,
         program: "pumpfun",
+        tsSource,
         raw: { bondingCurve: e.bondingCurve },
       };
   }
@@ -153,17 +159,17 @@ export type SwapEventInsert = {
   tokenAmount: number;     // whole tokens
   vSolAfter: number;       // effective vSol
   pool: string;
+  tsSource: BlockTimeSource;
 };
 
 export async function insertSwapEvents(batch: SwapEventInsert[]): Promise<number> {
   if (batch.length === 0) return 0;
   const rows = batch.map((e) => {
-    const sec = normalizeBlockTimeSec(e.blockTime, Math.floor(Date.now() / 1000));
     return {
       signature: e.signature,
       instructionIndex: e.instructionIndex,
       slot: e.slot,
-      ts: new Date(sec * 1000),
+      ts: new Date(e.blockTime * 1000),
       kind: e.side, // 'buy' | 'sell' — user perspective
       mint: e.mint,
       wallet: e.wallet,
@@ -172,6 +178,7 @@ export async function insertSwapEvents(batch: SwapEventInsert[]): Promise<number
       tokenAmount: e.tokenAmount,
       vSolAfter: e.vSolAfter,
       program: "pumpswap",
+      tsSource: e.tsSource,
       venue: "pumpswap" as const,
       pool: e.pool,
       raw: null,
@@ -221,6 +228,9 @@ export async function insertSnapshotEvents(
           tokenAmount: null,
           vSolAfter: r.vSol,
           program: "trend-scanner",
+          // Synthetic price hook, not a chain event — its ts is the local clock
+          // by construction, so latency math must never read it as chain time.
+          tsSource: "local",
           raw: null,
         })
         .onConflictDoNothing();

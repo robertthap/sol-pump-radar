@@ -167,7 +167,7 @@ async function fetchFirstEngineADetectionTs(mint: string): Promise<number | null
   await bootDb();
   try {
     const res = await getDb().execute(sql`
-      SELECT EXTRACT(EPOCH FROM MIN(ts)) * 1000 AS ts_ms
+      SELECT (EXTRACT(EPOCH FROM MIN(ts)) * 1000)::float8 AS ts_ms
       FROM decision_log
       WHERE mint = ${mint}
         AND ts > now() - interval '24 hours'

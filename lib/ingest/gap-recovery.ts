@@ -116,9 +116,15 @@ async function recoverOneMint(
       const tx = await rpc.getTransaction(sig.signature);
       const logs = tx?.meta?.logMessages ?? null;
       if (!logs || logs.length === 0) continue;
-      const ts = tx?.blockTime ?? Math.floor(Date.now() / 1000);
+      // Unlike the live WS, replay CAN see the real chain time. Only claim
+      // "chain" when the RPC actually returned one.
+      const chainTs =
+        typeof tx?.blockTime === "number" && Number.isFinite(tx.blockTime) ? tx.blockTime : null;
+      const ts = chainTs ?? Math.floor(Date.now() / 1000);
       try {
-        const parsed = parseProgramLogs(logs, sig.signature, slot, ts);
+        const parsed = parseProgramLogs(
+          logs, sig.signature, slot, ts, chainTs != null ? "chain" : "local",
+        );
         // Per-mint discipline: only keep events that actually belong to this
         // mint (the bonding-curve PDA's logs may include adjacent program
         // activity in edge cases).

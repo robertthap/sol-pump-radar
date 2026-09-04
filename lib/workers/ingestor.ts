@@ -256,7 +256,10 @@ export async function startIngestor() {
     }
     let parsed: ParsedPumpEvent[];
     try {
-      parsed = parseProgramLogs(n.logs, n.signature, BigInt(n.slot ?? 0), Math.floor(Date.now() / 1000));
+      // Live WS gives us no chain blockTime — the fallback is our receive clock.
+      parsed = parseProgramLogs(
+        n.logs, n.signature, BigInt(n.slot ?? 0), Math.floor(Date.now() / 1000), "local",
+      );
     } catch (e) {
       stats.decodeErrors++;
       stats.lastError = "decode: " + String(e);
@@ -336,6 +339,7 @@ export async function startIngestor() {
             tokenAmount: e.tokenAmount / 1e6, // raw → whole tokens (pump 6 decimals)
             vSolAfter: vSol,
             pool: e.pool,
+            tsSource: e.tsSource,
           });
         }
         if (rows.length) {
@@ -360,7 +364,10 @@ export async function startIngestor() {
       if (n.err || !n.signature || !n.logs) return;
       let raws: RawSwapEvent[];
       try {
-        raws = parseSwapLogs(n.logs, n.signature, BigInt(n.slot ?? 0), Math.floor(Date.now() / 1000));
+        // Live WS gives us no chain blockTime — the fallback is our receive clock.
+        raws = parseSwapLogs(
+          n.logs, n.signature, BigInt(n.slot ?? 0), Math.floor(Date.now() / 1000), "local",
+        );
       } catch {
         stats.decodeErrors++;
         return;

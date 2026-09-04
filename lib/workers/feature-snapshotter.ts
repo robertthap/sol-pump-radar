@@ -11,6 +11,7 @@ import { solUsdFreshness } from "@/lib/market/sol-usd";
 import { dexMarketCacheAgeMs } from "@/lib/dex/snapshot-cache";
 import { mcapUsdFromVSol } from "@/lib/pricing/seam";
 import { touchWorker } from "@/lib/workers/heartbeat";
+import { snapshotStaleFlags } from "@/lib/workers/stale-flags";
 
 /**
  * Upgrade-plan Phase 1 — point-in-time feature capture for UNIVERSE mints.
@@ -100,14 +101,7 @@ export async function startFeatureSnapshotter() {
       if (rows.length === 0) return;
 
       const already = await recentlySnapshottedMints("universe", DEDUPE_SEC);
-      const sol = solUsdFreshness();
-      const dexAgeMs = dexMarketCacheAgeMs();
-      const staleFlags = {
-        sol_price_stale: !sol.fresh,
-        sol_price_fallback: sol.usingFallback,
-        dex_age_ms: Number.isFinite(dexAgeMs) ? dexAgeMs : null,
-        dex_stale: dexAgeMs > 90_000,
-      };
+      const staleFlags = snapshotStaleFlags(solUsdFreshness(), dexMarketCacheAgeMs());
 
       const inputs: FeatureSnapshotInput[] = [];
       for (const r of rows) {

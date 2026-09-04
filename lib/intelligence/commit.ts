@@ -27,7 +27,7 @@ import { hasMaterialChange } from "@/lib/intelligence/eval-scheduler";
 import { enqueueDbWrite } from "@/lib/db/write-queue";
 
 import { emitBusEvent } from "@/lib/arch/event-bus";
-import { getSolUsdSync } from "@/lib/market/sol-usd";
+import { solUsdFreshness } from "@/lib/market/sol-usd";
 
 import {
 
@@ -213,7 +213,15 @@ export async function planIntelligenceCommit(
   };
   const liqUsd = opts?.input?.liquidity_usd;
   if (liqUsd != null && liqUsd > 0 && !(Number(moduleScores._v_sol) > 0)) {
-    moduleScores._v_sol = liqUsd / getSolUsdSync();
+    // _v_sol is derived from a USD figure, so it inherits the SOL/USD basis. The
+    // auto-trader already skips ENTRIES while that price is on its fallback, but
+    // the DECISION is still written to decision_log and flows into
+    // feature_snapshots — so stamp the freshness and keep contaminated rows
+    // filterable later (same idea as outcome_labels.blocked_reason).
+    // Gating is deliberately unchanged: this only labels, it never rejects.
+    const sol = solUsdFreshness();
+    moduleScores._v_sol = liqUsd / sol.usd;
+    moduleScores._sol_usd_stale = sol.fresh ? 0 : 1;
   }
 
   const executed = queueForAuto ? "pending" : buyAction ? "skipped" : "pending";

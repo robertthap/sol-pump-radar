@@ -10,6 +10,8 @@ import {
 import { solUsdFreshness } from "@/lib/market/sol-usd";
 import { mcapUsdFromVSol } from "@/lib/pricing/seam";
 import { touchWorker } from "@/lib/workers/heartbeat";
+import { dexMarketCacheAgeMs } from "@/lib/dex/snapshot-cache";
+import { snapshotStaleFlags } from "@/lib/workers/stale-flags";
 
 /**
  * Upgrade-plan Phase 1, issue #2 — selection-bias control.
@@ -75,11 +77,8 @@ export async function startControlSampler() {
     try {
       const already = await recentlySnapshottedMints("control", DEDUPE_SEC);
       const rows = await fetchControlCandidates(SAMPLE_N * 3);
-      const sol = solUsdFreshness();
-      const staleFlags = {
-        sol_price_stale: !sol.fresh,
-        sol_price_fallback: sol.usingFallback,
-      };
+      // Same shape as the universe arm so one filter spans both (stale-flags.ts).
+      const staleFlags = snapshotStaleFlags(solUsdFreshness(), dexMarketCacheAgeMs());
 
       const inputs: FeatureSnapshotInput[] = [];
       for (const r of rows) {

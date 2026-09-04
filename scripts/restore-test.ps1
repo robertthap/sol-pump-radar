@@ -90,8 +90,15 @@ foreach ($t in $criticalTables) {
   }
   $countRaw = (Pg-ExecTest "SELECT count(*) FROM $t").Trim()
   Write-Host "[restore-test]   $t  row count: $countRaw"
-  if (-not [int64]::TryParse($countRaw, [ref]([int64]0))) {
+  # NOTE: TryParse must write into a real variable. Passing [ref]([int64]0)
+  # discards the parsed value, which made the emptiness check below unreachable
+  # and let a schema-only restore (every table 0 rows) exit PASS.
+  [int64]$rowCount = 0
+  if (-not [int64]::TryParse($countRaw, [ref]$rowCount)) {
     $failures += "could not read row count for $t (got: $countRaw)"
+  }
+  elseif ($rowCount -eq 0) {
+    $failures += "$t restored with 0 rows - dump is schema-only or truncated"
   }
 }
 

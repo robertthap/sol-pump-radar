@@ -33,6 +33,12 @@ export const events = pgTable(
     venue: varchar("venue", { length: 16 }).notNull().default("curve"),
     // T1.2 — PumpSwap pool/pair address (null for curve events).
     pool: varchar("pool", { length: 64 }),
+    // Provenance of `ts`: 'chain' when the on-chain blockTime was present and
+    // plausible, 'local' when we fell back to the receive clock (see
+    // classifyBlockTime). NULL on rows written before this column existed — their
+    // provenance is genuinely unknown, so latency math must exclude them rather
+    // than assume chain time.
+    tsSource: varchar("ts_source", { length: 8 }),
     raw: jsonb("raw"),
   },
   (t) => ({

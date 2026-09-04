@@ -1,5 +1,6 @@
 import bs58 from "bs58";
 import { BorshReader, safeNumber } from "@/lib/rpc/borsh";
+import type { BlockTimeSource } from "@/lib/pump/parser";
 import { PUMP_SWAP_DISCRIMINATORS, SOL_DECIMALS, PUMP_TOKEN_DECIMALS } from "./program";
 import { CURVE_DIV } from "@/lib/dex/curve-mcap";
 import { PUMP_SUPPLY } from "@/lib/chart/constants";
@@ -31,6 +32,8 @@ export type RawSwapEvent = {
   logIndex: number;
   slot: bigint;
   blockTime: number;
+  /** Whether `blockTime` came from the chain or a local fallback. */
+  tsSource: BlockTimeSource;
   /** base-token leg amount (raw units). Which mint this is depends on the pool. */
   baseAmount: number;
   /** quote-token leg amount (raw units). */
@@ -48,7 +51,7 @@ function decodeSwap(
   body: Buffer,
   eventType: "buy" | "sell",
   logIndex: number,
-  ctx: { signature: string; slot: bigint; blockTime: number },
+  ctx: { signature: string; slot: bigint; blockTime: number; blockTimeSource: BlockTimeSource },
 ): RawSwapEvent | null {
   try {
     const r = new BorshReader(body);
@@ -74,6 +77,9 @@ function decodeSwap(
       logIndex,
       slot: ctx.slot,
       blockTime: ctx.blockTime,
+      // decodeSwap discards the event's own i64 timestamp and uses ctx.blockTime,
+      // so provenance is entirely the caller's fallback.
+      tsSource: ctx.blockTimeSource,
       baseAmount,
       quoteAmount,
       poolBaseReserves,
@@ -126,9 +132,12 @@ export function parseSwapLogs(
   signature: string,
   slot: bigint,
   blockTime: number,
+  /** Provenance of `blockTime`. Defaults to "local" so a caller that does not
+   *  know can never accidentally claim chain time. */
+  blockTimeSource: BlockTimeSource = "local",
 ): RawSwapEvent[] {
   const out: RawSwapEvent[] = [];
-  const ctx = { signature, slot, blockTime };
+  const ctx = { signature, slot, blockTime, blockTimeSource };
   for (const line of logs) {
     if (!line.startsWith(PROGRAM_DATA_PREFIX)) continue;
     let buf: Buffer;
@@ -170,6 +179,8 @@ export type EnrichedSwap = {
   signature: string;
   slot: bigint;
   blockTime: number;
+  /** Whether `blockTime` came from the chain or a local fallback. */
+  tsSource: BlockTimeSource;
   pool: string;
 };
 
@@ -198,6 +209,7 @@ export function enrichSwap(
     signature: raw.signature,
     slot: raw.slot,
     blockTime: raw.blockTime,
+    tsSource: raw.tsSource,
     pool: raw.pool,
   };
 }

@@ -11,6 +11,8 @@ export type ParsedTradeEvent = {
   signature: string;
   slot: bigint;
   blockTime: number;
+  /** Whether `blockTime` came from the chain or a local fallback. */
+  tsSource: BlockTimeSource;
   mint: string;
   wallet: string;
   side: "buy" | "sell";
@@ -24,6 +26,8 @@ export type ParsedCreateEvent = {
   signature: string;
   slot: bigint;
   blockTime: number;
+  /** Whether `blockTime` came from the chain or a local fallback. */
+  tsSource: BlockTimeSource;
   mint: string;
   wallet: string;
   name: string;
@@ -37,6 +41,8 @@ export type ParsedCompleteEvent = {
   signature: string;
   slot: bigint;
   blockTime: number;
+  /** Whether `blockTime` came from the chain or a local fallback. */
+  tsSource: BlockTimeSource;
   mint: string;
   wallet: string;
   bondingCurve: string;
@@ -48,19 +54,37 @@ function b58(buf: Buffer): string {
   return bs58.encode(buf);
 }
 
-/** Normalize chain / log timestamps to unix seconds for DB storage. */
-export function normalizeBlockTimeSec(raw: number, fallbackSec: number): number {
-  if (!Number.isFinite(raw) || raw <= 0) return fallbackSec;
+/** Where a stored event timestamp came from: on-chain, or our local clock. */
+export type BlockTimeSource = "chain" | "local";
+
+/**
+ * Normalize chain / log timestamps to unix seconds AND report which source the
+ * value came from. When the on-chain time is missing or implausible we fall back
+ * to the local clock — the two are indistinguishable once stored, so callers that
+ * persist the value should also persist `source` (see events.ts_source). Without
+ * it, any latency figure derived from events.ts silently mixes chain time with
+ * receive time.
+ */
+export function classifyBlockTime(
+  raw: number,
+  fallbackSec: number,
+): { sec: number; source: BlockTimeSource } {
+  if (!Number.isFinite(raw) || raw <= 0) return { sec: fallbackSec, source: "local" };
   let sec = raw;
   if (sec > 1e12) sec = Math.floor(sec / 1000);
   const nowSec = Math.floor(Date.now() / 1000);
-  if (sec < 1_000_000_000 || sec > nowSec + 120) return fallbackSec;
-  return Math.floor(sec);
+  if (sec < 1_000_000_000 || sec > nowSec + 120) return { sec: fallbackSec, source: "local" };
+  return { sec: Math.floor(sec), source: "chain" };
+}
+
+/** Normalize chain / log timestamps to unix seconds for DB storage. */
+export function normalizeBlockTimeSec(raw: number, fallbackSec: number): number {
+  return classifyBlockTime(raw, fallbackSec).sec;
 }
 
 function decodeTrade(
   body: Buffer,
-  ctx: { signature: string; slot: bigint; blockTime: number },
+  ctx: { signature: string; slot: bigint; blockTime: number; blockTimeSource: BlockTimeSource },
 ): ParsedTradeEvent | null {
   try {
     const r = new BorshReader(body);
@@ -72,11 +96,17 @@ function decodeTrade(
     const ts = r.i64();
     const vSol = r.u64();
     r.u64();
+    const bt = classifyBlockTime(safeNumber(ts), ctx.blockTime);
     return {
       kind: isBuy ? "buy" : "sell",
       signature: ctx.signature,
       slot: ctx.slot,
-      blockTime: normalizeBlockTimeSec(safeNumber(ts), ctx.blockTime),
+      blockTime: bt.sec,
+      // If the event's own on-chain ts was usable this is genuinely chain time.
+      // If we fell back to ctx.blockTime, provenance is whatever the CALLER's
+      // fallback was (local for the live WS, chain for gap recovery replaying a
+      // real tx.blockTime) — never re-inferred from how plausible the number looks.
+      tsSource: bt.source === "chain" ? "chain" : ctx.blockTimeSource,
       mint,
       wallet: user,
       side: isBuy ? "buy" : "sell",
@@ -91,7 +121,7 @@ function decodeTrade(
 
 function decodeCreate(
   body: Buffer,
-  ctx: { signature: string; slot: bigint; blockTime: number },
+  ctx: { signature: string; slot: bigint; blockTime: number; blockTimeSource: BlockTimeSource },
 ): ParsedCreateEvent | null {
   try {
     const r = new BorshReader(body);
@@ -106,6 +136,8 @@ function decodeCreate(
       signature: ctx.signature,
       slot: ctx.slot,
       blockTime: ctx.blockTime,
+      // No on-chain ts in this event: provenance is the caller's fallback.
+      tsSource: ctx.blockTimeSource,
       mint,
       wallet: user,
       name: name.slice(0, 96),
@@ -120,7 +152,7 @@ function decodeCreate(
 
 function decodeComplete(
   body: Buffer,
-  ctx: { signature: string; slot: bigint; blockTime: number },
+  ctx: { signature: string; slot: bigint; blockTime: number; blockTimeSource: BlockTimeSource },
 ): ParsedCompleteEvent | null {
   try {
     const r = new BorshReader(body);
@@ -132,6 +164,8 @@ function decodeComplete(
       signature: ctx.signature,
       slot: ctx.slot,
       blockTime: ctx.blockTime,
+      // No on-chain ts in this event: provenance is the caller's fallback.
+      tsSource: ctx.blockTimeSource,
       mint,
       wallet: user,
       bondingCurve,
@@ -146,9 +180,12 @@ export function parseProgramLogs(
   signature: string,
   slot: bigint,
   blockTime: number,
+  /** Provenance of `blockTime`. Defaults to "local" so a caller that does not
+   *  know can never accidentally claim chain time. */
+  blockTimeSource: BlockTimeSource = "local",
 ): ParsedPumpEvent[] {
   const out: ParsedPumpEvent[] = [];
-  const ctx = { signature, slot, blockTime };
+  const ctx = { signature, slot, blockTime, blockTimeSource };
   for (const line of logs) {
     if (!line.startsWith(PROGRAM_DATA_PREFIX)) continue;
     const b64 = line.slice(PROGRAM_DATA_PREFIX.length);

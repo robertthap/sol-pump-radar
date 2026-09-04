@@ -70,7 +70,7 @@ async function fetchFirstEngineBDetectionTs(mint: string): Promise<number | null
   await bootDb();
   try {
     const res = await getDb().execute(sql`
-      SELECT EXTRACT(EPOCH FROM MIN(ts)) * 1000 AS ts_ms
+      SELECT (EXTRACT(EPOCH FROM MIN(ts)) * 1000)::float8 AS ts_ms
       FROM engine_b_traces
       WHERE mint = ${mint}
         AND (trace->'outputs'->>'action') IN ('ALERT', 'CONTINUATION_BUY', 'WATCH')
