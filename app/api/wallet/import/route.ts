@@ -5,6 +5,7 @@ import { bootDb } from "@/lib/db/client";
 import { encryptSecret, blobToString } from "@/lib/wallet/crypto";
 import { saveWallet, walletExists } from "@/lib/wallet/storage";
 import { logger } from "@/lib/log";
+import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,6 +38,12 @@ function parseSecretKey(input: string): Uint8Array {
 
 export async function POST(req: NextRequest) {
   await bootDb();
+  if (env().WEB_WALLET_SESSION !== "on") {
+    return NextResponse.json(
+      { error: "web_wallet_session_disabled", hint: "Set WEB_WALLET_SESSION=on to manage wallet keys from the web process." },
+      { status: 409 },
+    );
+  }
   let body: { passphrase?: unknown; secretKey?: unknown; label?: unknown };
   try {
     body = (await req.json()) as typeof body;

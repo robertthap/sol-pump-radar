@@ -79,4 +79,35 @@ describe("decidePaperExit", () => {
     assert.equal(decidePaperExit(0.02, 0.05, 2 * 60_000, GENESIS), null); // 2min, flat → still held
     assert.equal(decidePaperExit(0.02, 0.05, 5 * 60_000, GENESIS), "timeout"); // max-hold reached
   });
+
+  // The auto-trader derives peak as Math.max(prevPeak, pctOfSize) (auto-trader.ts:544),
+  // so peak >= current ALWAYS. With trailing enabled and trailArmPct <= tpPct, reaching
+  // tpPct necessarily arms the trail first, which makes the fixed-TP branch unreachable.
+  // DEFAULT_PARAMS ships trailingArmPct 0.15 / trailingStopPct 0.08 and both start routes
+  // spread it, so this is the live configuration. Pinned so a future change to the
+  // defaults (or to the peak formula) fails loudly instead of silently re-enabling "tp".
+  it("production config: reaching tpPct always arms the trail first, so 'tp' cannot fire", () => {
+    assert.equal(decidePaperExit(0.35, 0.35, 1000, P), null);
+    assert.equal(decidePaperExit(0.4, 0.4, 1000, P), null);
+  });
+
+  it("fixed TP fires only when the trail arms ABOVE the take-profit", () => {
+    const lateArm = { ...P, trailArmPct: 0.5 }; // arm 0.50 > tp 0.35
+    assert.equal(decidePaperExit(0.35, 0.35, 1000, lateArm), "tp");
+  });
+
+  it("hard stop wins over an armed trail on the same tick", () => {
+    assert.equal(decidePaperExit(-0.13, 0.5, 1000, P), "sl");
+  });
+
+  it("thresholds are inclusive at the boundary", () => {
+    assert.equal(decidePaperExit(-0.12, 0.05, 1000, P), "sl"); // exactly -slPct
+    assert.equal(decidePaperExit(0.12, 0.2, 1000, P), "trail"); // exactly peak - trailStopPct
+    assert.equal(decidePaperExit(0.02, 0.05, 35 * 60_000, P), "timeout"); // exactly maxHoldMs
+  });
+
+  it("stagnation is suppressed when stagnationMs is absent or 0", () => {
+    assert.equal(decidePaperExit(0.03, 0.05, 11 * 60_000, P), null);
+    assert.equal(decidePaperExit(0.03, 0.05, 11 * 60_000, { ...P, stagnationMs: 0 }), null);
+  });
 });

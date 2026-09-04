@@ -5,6 +5,7 @@ import { buildUnsignedLiveSellTx } from "@/lib/executor/live-phantom";
 import { env, rpcHttpUrls } from "@/lib/env";
 import { resolvePumpTradeMint } from "@/lib/pump/resolve-price";
 import { withRoutePerf } from "@/lib/runtime/with-route-perf";
+import { assertLiveExecutionAllowed } from "@/lib/runtime/live-guards";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -55,6 +56,13 @@ export const POST = withRoutePerf(async (req: Request) => {
   if (!rpcUrl) return NextResponse.json({ error: "no_rpc" }, { status: 500 });
   if (env().LIVE_EXECUTION !== "on") {
     return NextResponse.json({ error: "live_disabled" }, { status: 409 });
+  }
+  // Selling is the de-risking direction, but it is still a real mainnet tx, and
+  // this route previously honoured neither the circuit breaker nor the live
+  // confirm token — quick-sell does both. Match it.
+  const liveGate = await assertLiveExecutionAllowed();
+  if (!liveGate.ok) {
+    return NextResponse.json({ error: liveGate.reason }, { status: 409 });
   }
 
   const built = await buildUnsignedLiveSellTx({ mint, percent, publicKey, rpcUrl });

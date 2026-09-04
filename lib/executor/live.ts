@@ -276,6 +276,13 @@ export async function buildUnsignedLiveBuyTx(opts: {
   if (!cap.ok) return { ok: false, reason: cap.reason };
 
   const e = env();
+  // assertLiveExecutionAllowed() passes while LIVE_DRY_RUN=on, and the worker
+  // executor honours that flag by not submitting. This browser-signed path had
+  // no such guard: it would hand Phantom a genuine, signable mainnet tx while
+  // the operator believed the system was in dry run. Refuse to build one.
+  if (e.LIVE_DRY_RUN === "on") {
+    return { ok: false, reason: "live_dry_run — refusing to build a signable transaction" };
+  }
   const lamports = BigInt(Math.round(opts.sizeSol * 1_000_000_000));
   const graduated = await isGraduated(opts.mint);
   const route: LiveTradeRoute = graduated ? "jupiter" : "pumpportal";

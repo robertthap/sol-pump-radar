@@ -4,6 +4,7 @@ import { logger } from "@/lib/log";
 import { env, rpcHttpUrls, activeMintWindowMinutes, autoDemoRelaxEnabled, isLiveAllowed, allowsLaunchTier, isV2SimpleEntry } from "@/lib/env";
 import { assertLiveExecutionAllowed } from "@/lib/runtime/live-guards";
 import { readState } from "@/lib/circuit-breaker/state";
+import { haltedNow as haltGuard, runHaltShutdown } from "@/lib/workers/halt-guard";
 import { getDb } from "@/lib/db/client";
 import {
   fetchPendingBuyDecisions,
@@ -202,7 +203,16 @@ export async function startAutoTrader() {
 
       const cb = await readState();
       if (cb.state === "HALTED") {
-        await stopSession("system halted");
+        // Manage exits ONE last time before retiring the session. Stopping first
+        // left every open position unmanaged until the next tick's orphan sweep
+        // (paper) or indefinitely (live, which the sweep does not cover).
+        // Ordering lives in halt-guard.ts so it is unit-tested; behaviour is
+        // unchanged (exit failure is reported and does not block retirement).
+        await runHaltShutdown({
+          handleExits: () => handleExits(session),
+          stopSession: () => stopSession("system halted"),
+          onExitError: (e) => log.warn("halt exit pass failed", { err: String(e) }),
+        });
         return;
       }
 
@@ -353,6 +363,22 @@ async function resolveCurrentForExit(
  * open positions with no exit logic running — they hang open indefinitely. This
  * runs each idle tick and force-closes them at their last mark.
  */
+/**
+ * Final pre-execution gate. The tick reads the breaker once at the top, but an
+ * entry pass then does many external round-trips (flow, DEX, insiders, pump API)
+ * before it fills — so a HALT raised mid-tick would otherwise still open
+ * positions. The live executor already re-checks via checkCaps(); paper had no
+ * equivalent. Cheap because it only runs when a fill is imminent.
+ */
+async function haltedNow(): Promise<boolean> {
+  // Logic (including the fail-closed branch) lives in lib/workers/halt-guard.ts
+  // so it can be unit-tested without the database. This binds it to the real
+  // breaker; behaviour is unchanged.
+  return haltGuard(readState, (e) =>
+    log.warn("breaker read failed before execution; treating as halted", { err: String(e) }),
+  );
+}
+
 async function sweepOrphanedOpenPositions(): Promise<void> {
   const res = await getDb().execute(sql`
     SELECT id::text AS id, mint,
@@ -1026,6 +1052,11 @@ async function handleGenesisEntries(session: AutoSessionDto): Promise<number> {
       poolLiquiditySol: sig.currentVSol,
     });
 
+    if (await haltedNow()) {
+      log.warn("halt raised mid-tick — abandoning genesis entries", { mint: sig.mint });
+      break;
+    }
+
     try {
       const { outcome, positionId } = await executePaperBuy(plan, {
         mint: sig.mint,
@@ -1375,6 +1406,10 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       entryFeatures.sim_ok = sim.ok;
       if (!sim.ok) {
         log.info("micro-sim flagged (paper bypass)", { mint: d.mint, reason: sim.reason });
+      }
+      if (await haltedNow()) {
+        log.warn("halt raised mid-tick — abandoning remaining entries", { mint: d.mint });
+        break;
       }
       const { outcome, positionId } = await executePaperBuy(plan, {
         mint: d.mint,
