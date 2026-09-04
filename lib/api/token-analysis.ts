@@ -1,4 +1,5 @@
 import "server-only";
+import { getEffectiveSignalMode } from "@/lib/env";
 import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { fetchPumpFunCoin } from "@/lib/pump/fun-api";
@@ -174,6 +175,7 @@ export async function fetchTokenAnalysis(
     const quality =
       row.action != null
         ? scoreSignal({
+      signalMode: getEffectiveSignalMode(),
             action: row.action,
             confluenceScore: row.conf ?? row.confluence_score ?? 0,
             gradScore: row.grad_score,

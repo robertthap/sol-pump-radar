@@ -10,6 +10,14 @@ export type SignalQualityInput = {
   rugLabel?: string | null;
   vetoes?: string[];
   executed?: string;
+  /**
+   * Effective signal mode. Server callers MUST pass getEffectiveSignalMode() —
+   * reading process.env directly misses the runtime DB override, and in the
+   * browser neither SIGNAL_MODE nor NEXT_PUBLIC_SIGNAL_MODE is defined at all,
+   * so scoring silently assumed profit mode everywhere. Omitted = legacy env
+   * behaviour, kept so client-side callers still render.
+   */
+  signalMode?: string | null;
 };
 
 export type SignalQuality = {
@@ -24,8 +32,10 @@ const CONFLUENCE_MIN: Record<string, number> = {
   BUY_MODERATE: 0.48,
 };
 
-/** Client + server safe; defaults to profit when SIGNAL_MODE unset. */
-function profitModeActive(): boolean {
+/** Client + server safe. Prefers the caller-supplied effective mode; falls back
+ *  to the raw env only when none was passed. Defaults to profit when unset. */
+function profitModeActive(explicit?: string | null): boolean {
+  if (explicit) return explicit !== "launch";
   const mode =
     typeof process !== "undefined"
       ? process.env.SIGNAL_MODE ?? process.env.NEXT_PUBLIC_SIGNAL_MODE
@@ -51,7 +61,7 @@ export function scoreSignal(input: SignalQualityInput): SignalQuality {
   if (rugLabel === "rugged") {
     return { score: 5, tier: "avoid", tradable: false, tags: [rugLabel] };
   }
-  const profit = profitModeActive();
+  const profit = profitModeActive(input.signalMode);
   if (rugLabel === "stalled" && !profit) {
     return { score: 5, tier: "avoid", tradable: false, tags: [rugLabel] };
   }

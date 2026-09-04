@@ -1,4 +1,5 @@
 import "server-only";
+import { getEffectiveSignalMode } from "@/lib/env";
 import { sql, desc } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { decisionLog } from "@/lib/db/schema";
@@ -369,6 +370,7 @@ export async function fetchSignalFeed(opts?: {
         : null;
     const intel = parseIntelligenceMeta(reasonHuman, r.modules_fired, moduleScores);
     const quality = scoreSignal({
+      signalMode: getEffectiveSignalMode(),
       action: r.action,
       confluenceScore: r.confluence_score,
       gradScore: r.grad_score,

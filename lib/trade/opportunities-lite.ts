@@ -1,4 +1,5 @@
 import "server-only";
+import { getEffectiveSignalMode } from "@/lib/env";
 import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { scoreSignal } from "@/lib/signals/quality";
@@ -118,6 +119,7 @@ export async function fetchTradeOpportunitiesLite(
 
   return (res as unknown as { rows: Raw[] }).rows.map((r) => {
     const quality = scoreSignal({
+      signalMode: getEffectiveSignalMode(),
       action: r.action,
       confluenceScore: r.confluence_score,
       gradScore: r.grad_score,
@@ -308,6 +310,7 @@ export async function fetchTradeOpportunitiesFull(
   return rows.map((r) => {
     const smartMoneyCount = smartByMint.get(r.mint) ?? 0;
     const quality = scoreSignal({
+      signalMode: getEffectiveSignalMode(),
       action: r.action,
       confluenceScore: r.confluence_score,
       gradScore: r.grad_score,

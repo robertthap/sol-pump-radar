@@ -1,4 +1,5 @@
 import "server-only";
+import { getEffectiveSignalMode } from "@/lib/env";
 
 import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
@@ -199,6 +200,7 @@ export async function enrichMarketMints(
     });
 
     const quality = scoreSignal({
+      signalMode: getEffectiveSignalMode(),
       action: r.action ?? "WATCH",
       confluenceScore: r.confluence ?? 0,
       gradScore: r.grad_score,
