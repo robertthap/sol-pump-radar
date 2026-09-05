@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { TrenchCoin } from "@/components/TrenchCoinCard";
+import type { TrenchCoin } from "@/lib/market/types";
 
 type GmgnToken = {
   address?: string;

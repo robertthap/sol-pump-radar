@@ -1,6 +1,5 @@
 /** Shared market coin types (client + server). */
 
-import type { TrenchCoin } from "@/components/TrenchCoinCard";
 
 export type MarketPrimaryFlag =
   | "strong_buy"
@@ -61,3 +60,23 @@ export function matchesMarketFilter(coin: MarketCoin, filter: MarketFilter): boo
   }
   return true;
 }
+
+/** A pump.fun coin as the market discovery/trenches pipeline sees it (moved from the deleted TrenchCoinCard component). */
+export type TrenchCoin = {
+  mint: string;
+  name: string | null;
+  symbol: string | null;
+  complete: boolean;
+  vSol: number | null;
+  usdMarketCap: number | null;
+  createdAt: string | null;
+  lastTradeAt: string | null;
+  imageUri: string | null;
+  twitter: string | null;
+  telegram: string | null;
+  website: string | null;
+  creator: string | null;
+  replyCount: number;
+  bondingPct: number | null;
+  analysis?: MarketCoinAnalysis;
+};

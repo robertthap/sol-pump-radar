@@ -5,7 +5,7 @@ import { tryFetchGmgnRank } from "@/lib/gmgn/rank";
 import { enrichMarketMints } from "@/lib/market/enrich-mints";
 import type { MarketCoin, MarketCoinAnalysis, MarketFeed } from "@/lib/market/types";
 import { fetchPumpFunCoin, fetchTrenchesFeed, type PumpFunCoin } from "@/lib/pump/fun-api";
-import type { TrenchCoin } from "@/components/TrenchCoinCard";
+import type { TrenchCoin } from "@/lib/market/types";
 
 type DexBoost = {
   chainId?: string;
