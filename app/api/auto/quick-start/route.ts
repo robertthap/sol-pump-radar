@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: gate.error }, { status: gate.status });
   }
 
-  let body: { preset?: string; sizeSol?: number; maxDailyLossSol?: number } = {};
+  let body: { preset?: string; sizeSol?: number; maxDailyLossSol?: number; maxConcurrent?: number } = {};
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -86,6 +86,17 @@ export async function POST(req: Request) {
     body.maxDailyLossSol <= 1000
   ) {
     params.maxDailyLossSol = body.maxDailyLossSol;
+  }
+  // Max open positions is a session-start parameter (the worker has no "edit a
+  // running session"). Validated like the two fields above; the worker still
+  // clamps to PAPER_MAX_OPEN_POSITIONS at runtime, so this is a request, not authority.
+  if (
+    typeof body.maxConcurrent === "number" &&
+    Number.isInteger(body.maxConcurrent) &&
+    body.maxConcurrent >= 1 &&
+    body.maxConcurrent <= 50
+  ) {
+    params.maxConcurrent = body.maxConcurrent;
   }
 
   const { correlationId } = await queueWebCommand(
