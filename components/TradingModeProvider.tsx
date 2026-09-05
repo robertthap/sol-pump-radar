@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -32,9 +33,10 @@ type ModeLitePayload = {
   /** A genuine live session (open positions / running auto-trader), not just a saved mode. */
   activeSession?: boolean;
   demo: DemoAccount;
-  real: { walletUnlocked: boolean; liveExecution: "on" | "off" };
+  real: { walletUnlocked: boolean; liveExecution: "on" | "off"; liveDryRun?: "on" | "off" };
   shadowLearner: { enabled: boolean };
 };
+export type { ModeLitePayload };
 
 type ModeState = {
   mode: UiTradingMode | null;
@@ -45,6 +47,7 @@ type ModeState = {
   shadowEnabled: boolean;
   walletUnlocked: boolean;
   liveExecution: "on" | "off";
+  liveDryRun: "on" | "off";
   loading: boolean;
   setMode: (m: UiTradingMode) => Promise<void>;
   /** End the current Demo or Real session and return to the home wallet chooser. */
@@ -58,6 +61,8 @@ const Ctx = createContext<ModeState | null>(null);
 
 const LS_KEY = "spr_trading_mode";
 const MODE_SYNC_KEY = "spr_trading_mode_db_synced";
+// While /trade's ticker is hydrating us this often, we never fetch mode-lite ourselves.
+const HYDRATE_FRESH_MS = 30_000;
 
 function readStoredMode(): UiTradingMode | null {
   if (typeof window === "undefined") return null;
@@ -84,7 +89,9 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
   const [shadowEnabled, setShadowEnabled] = useState(true);
   const [walletUnlocked, setWalletUnlocked] = useState(false);
   const [liveExecution, setLiveExecution] = useState<"on" | "off">("off");
+  const [liveDryRun, setLiveDryRun] = useState<"on" | "off">("on");
   const [loading, setLoading] = useState(false);
+  const hydratedAt = useRef(0);
 
   useEffect(() => {
     // Optimistically reflect the last-chosen wallet for an instant first paint. The
@@ -116,17 +123,22 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
     setShadowEnabled(j.shadowLearner?.enabled ?? true);
     setWalletUnlocked(j.real?.walletUnlocked ?? false);
     setLiveExecution(j.real?.liveExecution ?? "off");
+    setLiveDryRun(j.real?.liveDryRun ?? "on");
     setLoading(false);
   }, []);
 
   const hydrate = useCallback(
     (payload: ModeLitePayload) => {
+      hydratedAt.current = Date.now();
       applyModePayload(payload);
     },
     [applyModePayload],
   );
 
   const refresh = useCallback(async () => {
+    // /trade: the ticker pushes mode state with every poll (hydrate). Skip our own
+    // request while that is fresh so /api/ticker stays the page's only repeating call.
+    if (pathname.startsWith("/trade") && Date.now() - hydratedAt.current < HYDRATE_FRESH_MS) return;
     const full = needsFullDemo(pathname);
     const endpoint = full ? "/api/settings/mode" : "/api/settings/mode-lite";
     const j = await getJson<ModeLitePayload>(endpoint, full ? 0 : 12_000);
@@ -142,10 +154,9 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(t);
   }, [refresh, onTradePage]);
 
+  // On /trade this is only a fallback (see refresh): the ticker normally hydrates us.
   const pollMs = onTradePage
-    ? mode === "demo"
-      ? 8_000
-      : 30_000
+    ? 30_000
     : mode === "demo"
       ? needsFullDemo(pathname)
         ? 20_000
@@ -215,6 +226,7 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
       shadowEnabled,
       walletUnlocked,
       liveExecution,
+      liveDryRun,
       loading,
       setMode,
       exitSession,
@@ -229,6 +241,7 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
       shadowEnabled,
       walletUnlocked,
       liveExecution,
+      liveDryRun,
       loading,
       setMode,
       exitSession,

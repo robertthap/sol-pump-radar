@@ -211,6 +211,40 @@ async function main() {
     }
   }
 
+  // ── Stage 8b: /api/ticker — the single source of truth for /trade ─────
+  // The hero and every row on /trade come from this one response. Pin the
+  // invariants the screen relies on: totals are derived from the very rows it
+  // renders, the mode payload rides along (so the page never polls mode-lite),
+  // and skip noise never reaches the browser.
+  const tick = await getJson("/api/ticker");
+  if (!tick.ok) {
+    record("8b.ticker", "FAIL", `/api/ticker → HTTP ${tick.status}`);
+  } else {
+    const t = tick.body as {
+      sourceStatus: string;
+      portfolio: { investedSol: number; unrealizedPnlSol: number; openCount: number };
+      positions: Array<{ sizeSol: number; pnlSol: number | null }>;
+      logs: Array<{ kind: string }>;
+      mode: { mode: string | null } | null;
+      solUsd: number;
+    };
+    const sumPnl = t.positions.reduce((s, p) => s + (p.pnlSol ?? 0), 0);
+    const sumSize = t.positions.reduce((s, p) => s + p.sizeSol, 0);
+    const problems: string[] = [];
+    if (Math.abs(sumPnl - t.portfolio.unrealizedPnlSol) > 1e-9) problems.push(`unrealized ${t.portfolio.unrealizedPnlSol} != Σrows ${sumPnl}`);
+    if (Math.abs(sumSize - t.portfolio.investedSol) > 1e-9) problems.push(`invested ${t.portfolio.investedSol} != Σsize ${sumSize}`);
+    if (t.positions.length !== t.portfolio.openCount) problems.push(`openCount ${t.portfolio.openCount} != rows ${t.positions.length}`);
+    if (t.logs.some((l) => l.kind === "skip")) problems.push("skip entries leaked into logs");
+    if (!t.mode) problems.push("mode payload missing (TradingModeProvider would fall back to polling)");
+    if (!(t.solUsd > 0)) problems.push("solUsd missing");
+    if (!["live", "stale", "stopped", "no_session"].includes(t.sourceStatus)) problems.push(`sourceStatus=${t.sourceStatus}`);
+    record(
+      "8b.ticker",
+      problems.length ? "FAIL" : "PASS",
+      problems.length ? problems.join(" · ") : `status=${t.sourceStatus} · ${t.positions.length} rows · hero == Σrows · no skip noise`,
+    );
+  }
+
   // ── Stage 9: exit sanity ───────────────────────────────────────────────
   if (snap.closed.length === 0) {
     record("9.exit", "WARN", `no closed positions yet (exits are time/price-driven)`);
