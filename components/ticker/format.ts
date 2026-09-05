@@ -109,6 +109,26 @@ export function cleanLogMessage(msg: string): string {
   return out.replace(/\b([a-z]+)_([a-z_]+)\b/g, (m) => m.replace(/_/g, " ")).replace(/\s{2,}/g, " ").trim();
 }
 
+/** "stop-loss", "take-profit", "sold via Sell all", ... from a stored close reason. */
+export function closeReasonWords(reason: string | null | undefined): string {
+  if (!reason) return "closed";
+  let out = reason;
+  for (const [re, words] of CLOSE_REASON_WORDS) out = out.replace(re, words);
+  return out.replace(/_/g, " ");
+}
+
+/** "4m 12s" between two ISO times; "—" if either is missing. */
+export function heldFor(openedAt: string | null | undefined, closedAt: string | null | undefined): string {
+  if (!openedAt || !closedAt) return "—";
+  const ms = new Date(closedAt).getTime() - new Date(openedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 /** Plain words for the error codes the trade routes return. */
 export function tradeErrorMessage(code: string | null | undefined): string {
   const c = (code ?? "").toLowerCase();

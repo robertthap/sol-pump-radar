@@ -47,7 +47,7 @@ export function PnlSparkline({ series, label, height = 96 }: Props) {
     const zeroY = y(0);
     const line = `M${pts.join(" L")}`;
     const area = `${line} L${W},${zeroY.toFixed(1)} L0,${zeroY.toFixed(1)} Z`;
-    return { line, area, zeroY, H, first: vals[0]!, last: vals[vals.length - 1]!, min, max };
+    return { line, area, zeroY, H, first: vals[0]!, last: vals[vals.length - 1]!, lastY: y(vals[vals.length - 1]!), min, max };
   }, [series, height]);
 
   const stroke = state === "positive" ? "rgb(34 197 94)" : state === "negative" ? "rgb(244 84 84)" : "rgb(143 148 160)";
@@ -89,6 +89,8 @@ export function PnlSparkline({ series, label, height = 96 }: Props) {
       <line x1="0" x2={W} y1={geom.zeroY} y2={geom.zeroY} stroke="rgb(38 41 50)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
       <path d={geom.area} fill={`url(#${gradId})`} />
       <path d={geom.line} fill="none" stroke={stroke} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+      {/* "now" marker - static, draws the eye to the latest value */}
+      <circle cx={W} cy={geom.lastY} r="3.5" fill={stroke} vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

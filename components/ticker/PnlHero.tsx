@@ -12,6 +12,8 @@ import { arrowOf, aud, plainSol, signedPct, signedSol, toneClass, toneOf } from 
  * line separates the two so the percentage is unambiguous: it is the return on
  * what is currently open. Every figure carries sign + arrow, never colour only.
  * Numerics use tabular figures and reserved widths so 1 s updates do not jitter.
+ * The card's top edge and a faint glow behind the number take the P&L tone -
+ * information, not decoration.
  */
 const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   live: { text: "LIVE", cls: "text-ok" },
@@ -35,11 +37,20 @@ export function PnlHero() {
   const p = data?.portfolio;
   const totalTone = toneOf(p?.totalPnlSol);
   const openTone = toneOf(p?.unrealizedPnlSol);
+  const edge = totalTone === "up" ? "bg-ok" : totalTone === "down" ? "bg-bad" : "bg-border";
+  const glow =
+    totalTone === "up"
+      ? "bg-[radial-gradient(ellipse_at_left_top,rgb(34_197_94/0.10),transparent_60%)]"
+      : totalTone === "down"
+        ? "bg-[radial-gradient(ellipse_at_left_top,rgb(244_84_84/0.10),transparent_60%)]"
+        : "";
 
   const seriesLabel = target.kind === "portfolio" ? "Portfolio P&L" : `${target.symbol ?? target.mint.slice(0, 6)} P&L`;
 
   return (
-    <section className="card p-4 sm:p-5" aria-labelledby="pnl-hero-title">
+    <section className={`card relative overflow-hidden p-4 sm:p-5 ${glow}`} aria-labelledby="pnl-hero-title">
+      <div aria-hidden="true" className={`absolute inset-x-0 top-0 h-0.5 ${edge}`} />
+
       {/* One throttled status region; the fast numbers below are deliberately NOT live regions. */}
       <p className="sr-only" role="status" aria-atomic="true">
         {statusSentence}
@@ -50,7 +61,7 @@ export function PnlHero() {
           Total P&amp;L
         </h1>
         <div className="flex items-center gap-2 text-xs">
-          <span className={`inline-flex items-center gap-1.5 font-semibold ${s.cls}`}>
+          <span className={`pill font-semibold ${current ? "badge-up" : s.cls}`}>
             <span
               aria-hidden="true"
               className={`inline-block h-2 w-2 rounded-full ${current ? "bg-ok motion-safe:animate-pulse" : status === "stale" ? "bg-warn" : status === "halted" || status === "offline" || status === "error" ? "bg-bad" : "bg-muted"}`}
@@ -86,7 +97,7 @@ export function PnlHero() {
         <div>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span
-              className={`min-w-[11ch] text-4xl font-semibold leading-none tabular-nums sm:text-5xl ${toneClass(totalTone)}`}
+              className={`min-w-[11ch] text-5xl font-semibold leading-none tracking-tight tabular-nums sm:text-6xl ${toneClass(totalTone)}`}
               data-testid="hero-total"
             >
               {/* 4 decimals everywhere P&L is shown, so the hero never disagrees with a sum of the rows by rounding. */}
@@ -95,7 +106,7 @@ export function PnlHero() {
           </div>
           <p className="mt-1 text-sm text-muted tabular-nums">{p ? aud(p.totalPnlSol, data!.solAud) : "—"}</p>
 
-          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
             <div>
               <dt className="text-muted">Open</dt>
               <dd className={`font-medium tabular-nums ${toneClass(openTone)}`}>
@@ -108,24 +119,25 @@ export function PnlHero() {
               <dt className="text-muted">Realized (this session)</dt>
               <dd className={`font-medium tabular-nums ${toneClass(toneOf(p?.realizedPnlSol))}`}>{p ? signedSol(p.realizedPnlSol, 4) : "—"}</dd>
             </div>
-            <div>
-              <dt className="text-muted">Invested</dt>
-              <dd className="font-medium tabular-nums text-fg">{p ? plainSol(p.investedSol) : "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted">Value</dt>
-              <dd className="font-medium tabular-nums text-fg">{p ? plainSol(p.currentValueSol) : "—"}</dd>
-            </div>
-            <div className="col-span-2 sm:col-span-4">
-              <dt className="text-muted">Available</dt>
-              <dd className="font-medium tabular-nums text-fg">
-                {p?.availableSol != null ? plainSol(p.availableSol) : "—"}
-                {p?.unpricedCount ? (
-                  <span className="ml-2 text-warn">{p.unpricedCount} position{p.unpricedCount === 1 ? "" : "s"} not yet priced</span>
-                ) : null}
-              </dd>
-            </div>
           </dl>
+
+          <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
+            {[
+              ["Invested", p ? plainSol(p.investedSol) : "—"],
+              ["Value", p ? plainSol(p.currentValueSol) : "—"],
+              ["Available", p?.availableSol != null ? plainSol(p.availableSol) : "—"],
+            ].map(([k, v]) => (
+              <div key={k} className="card-2 px-3 py-2">
+                <dt className="text-[10px] uppercase tracking-wider text-muted">{k}</dt>
+                <dd className="mt-0.5 font-semibold tabular-nums text-fg">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          {p?.unpricedCount ? (
+            <p className="mt-2 text-xs text-warn">
+              {p.unpricedCount} position{p.unpricedCount === 1 ? "" : "s"} not yet priced
+            </p>
+          ) : null}
         </div>
 
         <div className="min-w-0">

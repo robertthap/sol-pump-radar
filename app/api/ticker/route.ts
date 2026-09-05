@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { bootDb } from "@/lib/db/client";
 import { cached } from "@/lib/api/short-cache";
-import { env } from "@/lib/env";
+import { autoDemoRelaxEnabled, env } from "@/lib/env";
+import { countPendingBuyDecisions } from "@/lib/db/repos/paper-trades";
 import { readState } from "@/lib/circuit-breaker/state";
 import { fetchHeartbeats } from "@/lib/runtime/worker-heartbeat-db";
 import { getSolUsd, solPriceCacheSnapshot } from "@/lib/market/sol-usd";
@@ -19,6 +20,7 @@ import {
   composePortfolio,
   filterImportantLogs,
   resolveSourceStatus,
+  type TickerClosedPosition,
   type TickerPosition,
   type TickerResponse,
   type TickerSourceStatus,
@@ -75,10 +77,13 @@ async function buildTicker(): Promise<TickerResponse> {
   const session = active ?? latest;
   const uiMode = modeLite.mode;
 
-  const [snap, logsRaw, todayLoss] = await Promise.all([
-    fetchAutoSessionPositionsSnapshot(20),
+  const [snap, logsRaw, todayLoss, pendingBuys] = await Promise.all([
+    // 60 = the snapshot's cap; closed rows for the Closed tab ride along in the same query.
+    fetchAutoSessionPositionsSnapshot(60),
     session ? fetchSessionActivityLog(session.id, { limit: 60 }) : Promise.resolve([]),
     session ? fetchTodayLoss(session.id).catch(() => 0) : Promise.resolve(0),
+    // Same 90 s window + relax flag the auto-trader itself uses for its queue.
+    active ? countPendingBuyDecisions(90, { relaxAutoGate: autoDemoRelaxEnabled() }).catch(() => 0) : Promise.resolve(0),
   ]);
 
   const positions: TickerPosition[] = snap.open.map((p) => ({
@@ -94,6 +99,18 @@ async function buildTicker(): Promise<TickerResponse> {
     entryVSol: p.entryVSol,
     currentVSol: p.currentVSol,
     openedAt: p.openedAt,
+  }));
+
+  const closedPositions: TickerClosedPosition[] = snap.closed.map((p) => ({
+    id: p.id,
+    mint: p.mint,
+    symbol: p.symbol,
+    source: p.source,
+    sizeSol: p.sizeSol,
+    pnlSol: p.pnlSol,
+    exitReason: p.exitReason,
+    openedAt: p.openedAt,
+    closedAt: p.closedAt,
   }));
 
   // availableSol is cash, not P&L, so reading it from the demo account cannot
@@ -141,8 +158,11 @@ async function buildTicker(): Promise<TickerResponse> {
     solAud: sol.aud,
     portfolio,
     positions,
+    closedPositions,
     bot: {
       running: !!active,
+      slotsFull: !!active && positions.length >= Math.min(params.maxConcurrent, e.PAPER_MAX_OPEN_POSITIONS),
+      pendingBuySignals: pendingBuys,
       sizeSol: params.sizeSol,
       maxDailyLossSol: params.maxDailyLossSol,
       maxConcurrent: params.maxConcurrent,

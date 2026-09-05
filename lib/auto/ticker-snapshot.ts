@@ -41,6 +41,20 @@ export type TickerPosition = {
   openedAt: string;
 };
 
+/** A position closed during this session - realized P&L and why it closed. */
+export type TickerClosedPosition = {
+  id: string;
+  mint: string;
+  symbol: string | null;
+  source: "paper" | "live";
+  sizeSol: number;
+  /** Realized P&L in SOL. */
+  pnlSol: number | null;
+  exitReason: string | null;
+  openedAt: string;
+  closedAt: string | null;
+};
+
 export type TickerPortfolio = {
   /** Sum of open.sizeSol — money currently at risk. */
   investedSol: number;
@@ -226,6 +240,8 @@ export type TickerResponse = {
   solAud: number;
   portfolio: TickerPortfolio;
   positions: TickerPosition[];
+  /** This session's closed trades, newest first (bounded by the snapshot's 60-row cap). */
+  closedPositions: TickerClosedPosition[];
   bot: {
     running: boolean;
     sizeSol: number;
@@ -235,6 +251,10 @@ export type TickerResponse = {
     effectiveMaxConcurrent: number;
     /** PAPER_MAX_OPEN_POSITIONS itself - the operator-configured ceiling the form must not exceed. */
     maxConcurrentCeiling: number;
+    /** Running with every slot taken: the entry pass returns before reading the queue. */
+    slotsFull: boolean;
+    /** Fresh BUY decisions in the bot's own queue window right now - what it would consider if a slot freed. */
+    pendingBuySignals: number;
     takeProfitPct: number;
     stopLossPct: number;
     maxHoldMinutes: number;

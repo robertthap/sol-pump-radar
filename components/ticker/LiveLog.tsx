@@ -40,10 +40,12 @@ export function LiveLog() {
             const tone = toneOf(e.pnlSol);
             return (
               <li key={e.id} className="grid grid-cols-[auto_auto_1fr_auto] items-baseline gap-x-3 border-b border-border px-3 py-2 last:border-b-0">
-                <time dateTime={e.ts} className="tabular-nums text-muted">
+                <time dateTime={e.ts} className="font-mono tabular-nums text-muted">
                   {clock(e.ts)}
                 </time>
-                <span className={`font-semibold ${k.cls}`}>{k.text}</span>
+                <span className={`chip ${k.cls} ${e.kind === "open" ? "border-accent/40" : e.kind === "halt" || e.kind === "error" ? "border-bad/40" : e.kind === "tp1" ? "border-ok/40" : ""}`}>
+                  {k.text}
+                </span>
                 <span className="min-w-0 truncate text-fg">
                   {e.symbol ?? (e.mint ? shortMint(e.mint) : "")}
                   {e.symbol || e.mint ? " · " : ""}

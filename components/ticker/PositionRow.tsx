@@ -50,7 +50,11 @@ export function PositionRow({ p, bot, uiMode }: Props) {
   }
 
   return (
-    <li className="border-b border-border last:border-b-0">
+    <li
+      className={`border-b border-border border-l-2 last:border-b-0 ${
+        tone === "up" ? "border-l-ok/60" : tone === "down" ? "border-l-bad/60" : "border-l-border"
+      }`}
+    >
       <div className="flex items-stretch">
         <button
           type="button"
@@ -62,7 +66,7 @@ export function PositionRow({ p, bot, uiMode }: Props) {
           <ChevronDown size={16} aria-hidden="true" className={`shrink-0 text-muted transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`} />
           <span className="block min-w-0 flex-1">
             <span className="flex items-center gap-2">
-              <span className="truncate font-semibold">{label}</span>
+              <span className="truncate font-semibold tracking-tight">{label}</span>
               <span className="text-xs text-muted tabular-nums">{plainSol(p.sizeSol)}</span>
             </span>
             <span className="mt-0.5 block text-xs text-muted tabular-nums">

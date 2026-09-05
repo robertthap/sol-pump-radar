@@ -122,8 +122,8 @@ export function BotControls() {
         <h2 id="bot-title" className="text-xs font-semibold uppercase tracking-wider text-muted">
           Auto trading
         </h2>
-        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${running ? "text-ok" : "text-muted"}`}>
-          <span aria-hidden="true" className={`inline-block h-2 w-2 rounded-full ${running ? "bg-ok" : "border border-muted"}`} />
+        <span className={`pill text-xs font-semibold ${running ? "badge-up" : "text-muted"}`}>
+          <span aria-hidden="true" className={`inline-block h-2 w-2 rounded-full ${running ? "bg-ok motion-safe:animate-pulse" : "border border-muted"}`} />
           {running ? "RUNNING" : "STOPPED"}
         </span>
       </div>
@@ -151,6 +151,33 @@ export function BotControls() {
               <RO k="Live" v={`execution ${bot.liveExecution}${bot.liveDryRun === "on" ? " · DRY RUN" : ""}`} cls={bot.liveExecution === "on" && bot.liveDryRun !== "on" ? "text-bad" : "text-warn"} />
             )}
           </dl>
+          {/* Slots: the one thing that explains "I have a good signal but nothing opens". */}
+          {(() => {
+            const used = data?.portfolio.openCount ?? 0;
+            const cap = bot.effectiveMaxConcurrent;
+            const pct = cap > 0 ? Math.min(100, Math.round((used / cap) * 100)) : 0;
+            return (
+              <div className="mt-3 rounded-md border border-border bg-bg/40 px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted">Slots</span>
+                  <span className={`font-semibold tabular-nums ${bot.slotsFull ? "text-warn" : "text-fg"}`}>
+                    {used} / {cap} open
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-panel2" aria-hidden="true">
+                  <div className={`h-full rounded-full ${bot.slotsFull ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} />
+                </div>
+                <p className="mt-1.5 text-muted">
+                  {bot.slotsFull
+                    ? `All ${cap} slots are full - new signals are not evaluated until a position closes (take-profit, stop-loss, trailing stop, ${bot.maxHoldMinutes}-min max hold, or Sell).`
+                    : `${bot.pendingBuySignals} fresh buy signal${bot.pendingBuySignals === 1 ? "" : "s"} in the queue right now.`}
+                  {bot.slotsFull && bot.pendingBuySignals > 0
+                    ? ` ${bot.pendingBuySignals} fresh signal${bot.pendingBuySignals === 1 ? "" : "s"} waiting; only signals from the last ~2 min are considered when a slot frees.`
+                    : ""}
+                </p>
+              </div>
+            );
+          })()}
           <p className="mt-2 text-xs text-muted">Stop the bot to change limits - they apply when a session starts.</p>
           <button
             type="button"
