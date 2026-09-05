@@ -6,8 +6,7 @@ A **localhost-only** Solana pump.fun analytics and paper-first trading dashboard
 
 ## Features
 
-- **Mission control UI** — dark trading terminal at `/mission` with live intelligence console, token drill-down, and signal streaming (SSE)
-- **Live candle charts** — OHLC updates over WebSocket from the worker; historical candles via REST
+- **Trading terminal** — one screen at `/trade`: live P&L hero with a sparkline, open positions with Sell / Sell all, bot Start/Stop with per-trade, daily-loss and max-position limits, strategy switch, and a plain-language log of trades and bot events — all fed by a single `/api/ticker` request (1 s while positions are open, paused when the tab is hidden)
 - **Dual-engine intelligence** — launch-hot sniper signals + Dex continuation scoring, fused through a single commit authority
 - **Paper trading** — realistic simulation with slippage, fees, latency, position limits, and daily loss caps
 - **Live execution (triple-gated)** — mainnet trades only when `RUNTIME_PROFILE=live`, `LIVE_EXECUTION=on`, and explicit confirmation are all set
@@ -21,7 +20,7 @@ Two processes, one database:
 | Process | Role | Command |
 |---|---|---|
 | **Postgres 16** | Sole durable truth | `pnpm db:up` |
-| **Worker** | Ingest, intelligence, trading FSM, chart WebSocket | `pnpm worker` |
+| **Worker** | Ingest, intelligence, auto-trader, paper/live execution | `pnpm worker` |
 | **Next.js** | UI + read API + gated writes (no workers) | `pnpm dev` |
 
 ```
@@ -33,7 +32,7 @@ Intelligence commit (priority queue, 3s tick)
         ↓
 Decision log + auto-trader (paper / live)
         ↓
-Mission control UI (poll + SSE + chart WS)
+Trading terminal UI (/trade → /api/ticker, one poll)
 ```
 
 Full details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
@@ -41,7 +40,7 @@ Full details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 ## Tech stack
 
 - **Runtime:** Node.js 20+, pnpm workspaces, TypeScript
-- **Frontend:** Next.js 15, React 19, Tailwind CSS, TradingView Lightweight Charts
+- **Frontend:** Next.js 15, React 19, Tailwind CSS (no charting library — the P&L sparkline is inline SVG)
 - **Backend:** Postgres 16 (Docker), Drizzle ORM, WebSocket (`ws`)
 - **Solana:** `@solana/web3.js`, Jupiter quotes, pump.fun / PumpPortal routing
 - **Wallet:** Phantom Connect SDK (optional), encrypted local vault
@@ -74,7 +73,7 @@ pnpm worker
 
 Open http://127.0.0.1:3000.
 
-**Charts:** Live OHLC streams from the worker on `CHART_WS_PORT` (default `8788`). Set `NEXT_PUBLIC_CHART_WS_URL` if the browser is not on the same host.
+**Screens:** `/` picks Demo or Real, `/trade` is the terminal, `/wallet` shows balance and wallet controls. Auto-trading is off after every worker restart until you press Start.
 
 ## Project layout
 

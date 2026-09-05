@@ -70,3 +70,51 @@ not re-flagged.
 | Migrations have no `down` | Recovery is restore-from-dump, which `safe-migrate.ps1` supports properly. |
 | `runMigrations` has no advisory lock | Every API route calls `bootDb()`, so the web tier is also a migration runner; `already exists` errors are swallowed. `pnpm build` is safe; `pnpm dev`/`start` concurrent with the worker are not. |
 | `confirm-live` trusts client-reported size | `sizeSol`/`entryVSol` from the request body are written to the live ledger without on-chain reconciliation. Live-phase work. |
+
+---
+
+## Frontend rebuild (2026-09-06)
+
+The 17-route, ~14,200-line frontend was replaced by three screens (`/` chooser, `/trade`
+terminal, `/wallet`) fed by one endpoint, `/api/ticker`. Everything below was removed **after**
+the chart worker lanes had been disabled and the runtime measured for a 5-minute window each way.
+
+### Measured: chart lanes ON vs OFF (5-minute windows, same script)
+
+| Metric | Lanes ON | Lanes OFF |
+|---|---|---|
+| DB transactions / s | 417 | 79 |
+| Postgres CPU (two samples) | 129% · 138% | 34% · 78% |
+| DB active time | 58.6% | 50.1% |
+| Worker CPU (share of one core) | 16.5% | 9.8% |
+| `chart-aggregator` duty | 338–382 ms of every 600 ms tick | — |
+| decision→intent p50 (trades opened in-window) | 51.5 s (n=2) | 29.8 s (n=5) — **inconclusive**, sample too small |
+
+The lanes were ~81% of DB transactions and ~40% of worker CPU whether or not a browser was
+open. Their effect on entry latency is **not** established by this data. `pg_stat_statements`
+is not installed (needs a Postgres restart), so this rests on `pg_stat_database` /
+`pg_stat_user_tables` deltas and process CPU.
+
+### Removed
+
+- Pages (13): `/analytics /backtest /diagnostics/runtime /learning /market /mission /notifications /paper /rings /runtime /signals /smart-money /token/[mint]`.
+- `lib/chart/**`, `components/chart/**`, the six `lib/workers/chart-*` lanes, the chart WebSocket server, `lightweight-charts`, and the `CHART_WS_PORT` / `NEXT_PUBLIC_CHART_WS_URL` env keys.
+- 44 components and 13 orphaned `lib/ui`, `lib/mission`, `lib/pump`, `lib/hooks` helpers.
+- 31 API routes whose only consumers were deleted pages, including `/api/backtest/run` (the unguarded N+1 above).
+
+### Preserved on purpose
+
+- `lib/chart/data/dexPool.ts` → `lib/dex/dex-pool.ts`, `lib/chart/data/onchainPrice.ts` → `lib/dex/onchain-price.ts`: graduated-position mark-to-market for stop-loss/take-profit. Not chart code.
+- `PUMP_SUPPLY` → `lib/pump/program.ts`; `TrenchCoin` type → `lib/market/types.ts` (the worker's trend-scanner reaches it through `lib/market/discovery`).
+- Seven operator routes with no UI consumer, kept because they are curl-able instruments: `/api/auto/status`, `/api/auto/log`, `/api/auto/diagnostics`, `/api/auto/session-insights` (the latency percentiles), `/api/trades/export` (tax CSV), `/api/settings/limits` (only runtime path to live caps).
+- The three chart tables (13.6 MB). Dropping them is a separate migration.
+
+### Still open after the rebuild
+
+| Item | Note |
+|---|---|
+| Sparkline history is per-tab | Client ring buffer (600 samples, `sessionStorage`). No server-side unrealized-P&L history exists. |
+| `lib` modules now with zero importers | `lib/api/token-bundle.ts`, `lib/backtest/learn.ts`, `lib/continuation/eval-mints-public.ts`, `lib/continuation/missed-report.ts`, `lib/db/repos/token-snapshot.ts`, `lib/ingest/helius-pumpswap-stub.ts`, `lib/intelligence/transition-replay.ts`, `lib/phantom/usePhantomLiveTrade.ts`, `lib/workers/decision.ts`. Not deleted — not frontend. |
+| Pre-existing dead API routes | Had no consumer before the rebuild either: `/api/auto/start /api/bots/flags /api/continuation/compare /api/continuation/eval /api/creates/live /api/dex/embed /api/events/recent /api/intelligence/evaluate /api/nav/status /api/paper/history /api/paper/reset /api/paper/snapshot /api/runtime/postgres /api/tokens/top /api/watchlist`. Left alone. |
+| Single Sell on a graduated coin | Demo sells price off the frozen curve; the row passes its mcap-derived `currentVSol` as the route's hint, so it works — but only because the hint exists. |
+| Historical docs | `SYSTEM_DESIGN.md`, `ARCHITECTURE*.md`, `PROJECT_STATUS.md`, `LOCALHOST_PROFILE.md` still describe the chart system and deleted pages as design history; `README.md` and `operations.md` are current. |

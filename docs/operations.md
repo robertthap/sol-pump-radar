@@ -21,7 +21,7 @@ live mode and should not be "fixed".
 
 ### Restart discipline
 
-The worker does **not** hot-reload. Its in-memory state (chart snapshots, prior-snapshot maps,
+The worker does **not** hot-reload. Its in-memory state (prior-snapshot maps,
 hot-mint registry) will otherwise overwrite corrected data.
 
 ```text
@@ -139,13 +139,12 @@ Verified end to end against a real 1 GB dump: `events` 2,900,606 · `feature_sna
 | Symptom | Cause | Fix |
 |---|---|---|
 | PowerShell commands fail mid-build | Docker Desktop stopped (often after sleep) | relaunch Docker Desktop, poll `docker info`, `pnpm db:up`, restart worker + dev |
-| Chart fixes "don't stick" | worker holds stale code; its WS `SYNC_SNAPSHOT` clobbers corrected REST data | restart `pnpm worker` |
 | Worker dies during a build | `pnpm build` kills a running worker | build last |
 | Auto-trader opens nothing | no active session (retired at boot), or all candidates vetoed | press Start; read `/api/auto/diagnostics` |
 | Worker exits immediately | another worker holds the singleton lock | stop it, or `pnpm worker:unlock` if the heartbeat is stale |
 | Live intents all rejected | vault locked | set `VAULT_PASSPHRASE` or `pnpm worker:unlock` |
 | `env()` throws at boot | live flags set without `LIVE_CONFIRM` | set the token or turn live off — the guard is working |
-| 404 on `/token/[mint]` | `.next` cache corruption | stop dev, delete `.next`, restart |
+| 404 on a route that exists, or `tsc` errors under `.next/types` | stale `.next` (dev generates route type stubs; deleted routes leave orphans) | stop dev, delete `.next`, restart |
 | Events silently missing | ingest buffer hit `MAX_INGEST_QUEUE` | check `eventsDropped` on `/api/stats/ingestor` (newly exposed) |
 
 ---
