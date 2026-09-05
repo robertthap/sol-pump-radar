@@ -3,7 +3,7 @@ import { BorshReader, safeNumber } from "@/lib/rpc/borsh";
 import type { BlockTimeSource } from "@/lib/pump/parser";
 import { PUMP_SWAP_DISCRIMINATORS, SOL_DECIMALS, PUMP_TOKEN_DECIMALS } from "./program";
 import { CURVE_DIV } from "@/lib/dex/curve-mcap";
-import { PUMP_SUPPLY } from "@/lib/chart/constants";
+import { PUMP_SUPPLY } from "@/lib/pump/program";
 
 const PROGRAM_DATA_PREFIX = "Program data: ";
 const LAMPORTS_PER_SOL = 10 ** SOL_DECIMALS;

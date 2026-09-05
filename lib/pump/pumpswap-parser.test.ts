@@ -5,7 +5,7 @@ import { join } from "path";
 import { parseSwapLogs, enrichSwap, effectiveVSolFromReserves } from "./pumpswap-parser";
 import { WSOL_MINT } from "./program";
 import { mcapUsdFromVSolAt } from "@/lib/dex/curve-mcap";
-import { PUMP_SUPPLY } from "@/lib/chart/constants";
+import { PUMP_SUPPLY } from "@/lib/pump/program";
 
 /**
  * T1.2b gate — captured real PumpSwap txs (validated against on-chain balance

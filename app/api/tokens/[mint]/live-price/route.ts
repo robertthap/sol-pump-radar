@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { fetchDexMarketBatch } from "@/lib/dex/market-snapshot";
 import { cached } from "@/lib/api/short-cache";
-import { PUMP_SUPPLY } from "@/lib/chart/constants";
-import { resolveDexPool } from "@/lib/chart/data/dexPool";
-import { fetchOnchainMcap } from "@/lib/chart/data/onchainPrice";
+import { PUMP_SUPPLY } from "@/lib/pump/program";
+import { resolveDexPool } from "@/lib/dex/dex-pool";
+import { fetchOnchainMcap } from "@/lib/dex/onchain-price";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

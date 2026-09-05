@@ -3,7 +3,7 @@ import "server-only";
 import bs58 from "bs58";
 import { rpcHttpUrls } from "@/lib/env";
 import { getSolUsd } from "@/lib/market/sol-usd";
-import { PUMP_SUPPLY } from "@/lib/chart/constants";
+import { PUMP_SUPPLY } from "@/lib/pump/program";
 
 /**
  * Real-time market cap straight from the PumpSwap pool's on-chain reserves via

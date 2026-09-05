@@ -2,9 +2,9 @@ import "server-only";
 
 import { logger } from "@/lib/log";
 import { touchWorker } from "@/lib/workers/heartbeat";
-import { PUMP_SUPPLY } from "@/lib/chart/constants";
-import { resolveDexPool } from "@/lib/chart/data/dexPool";
-import { fetchOnchainMcap } from "@/lib/chart/data/onchainPrice";
+import { PUMP_SUPPLY } from "@/lib/pump/program";
+import { resolveDexPool } from "@/lib/dex/dex-pool";
+import { fetchOnchainMcap } from "@/lib/dex/onchain-price";
 import { insertDexQuote, fetchDexQuotes } from "@/lib/chart/data/tradeStore";
 import { getChartSubscribedMints } from "@/lib/chart/runtime/chartWsServer";
 import { getChartPipeline } from "@/lib/chart/runtime/chartRuntime";

@@ -7,7 +7,7 @@ import { CommitPipeline } from "@/lib/chart/realtime/commitPipeline";
 import { ChartMintCache } from "@/lib/chart/data/chartCache";
 import { MultiTfAggregator, replayTrades } from "@/lib/chart/data/candleBuilder";
 import { fetchGeckoOhlcv } from "@/lib/chart/data/geckoOhlcv";
-import { resolveDexPool } from "@/lib/chart/data/dexPool";
+import { resolveDexPool } from "@/lib/dex/dex-pool";
 import { resolveGraduationMs } from "@/lib/chart/data/graduation";
 import {
   fetchDexQuotes,

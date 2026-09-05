@@ -20,9 +20,6 @@ const AUTO_TRADER_STALE_MS = 15_000;
 const WORKER_CADENCE_MS: Record<string, number> = {
   "missed-winner-scan": 60 * 60_000, // hourly
   retention: 60 * 60_000, // hourly
-  "chart-aggregator": 2_000,
-  "chart-dex-quotes": 3_000,
-  "chart-reconcile": 30_000,
 };
 
 // These beat once at startup and intentionally never tick again (orchestrator = boot
@@ -136,10 +133,6 @@ export async function GET() {
     snapshot,
     snapshotSparkline,
     rpc: rpc ?? null,
-    chart: {
-      wsPort: e.CHART_WS_PORT,
-      wsUrl: e.NEXT_PUBLIC_CHART_WS_URL,
-    },
     now: new Date().toISOString(),
   });
 }

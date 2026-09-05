@@ -24,3 +24,6 @@ export const PUMP_SWAP_DISCRIMINATORS = {
   buy: anchorEventDiscriminator("BuyEvent"),
   sell: anchorEventDiscriminator("SellEvent"),
 };
+
+/** pump.fun total token supply (1B). Unit price ↔ market cap conversions. */
+export const PUMP_SUPPLY = 1e9;

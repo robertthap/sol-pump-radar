@@ -8,7 +8,6 @@ import { PUMP_BONDING_CURVE_PROGRAM, PUMP_SWAP_AMM_PROGRAM } from "@/lib/pump/pr
 import { parseSwapLogs, enrichSwap, effectiveVSolFromReserves, type RawSwapEvent } from "@/lib/pump/pumpswap-parser";
 import { resolvePoolInfoBatch } from "@/lib/pump/pool-registry";
 import { insertEvents, insertSwapEvents, type SwapEventInsert } from "@/lib/db/repos/events";
-import { ingestChartEventsFromBatch } from "@/lib/chart/data/ingestBridge";
 import { upsertNewTokens } from "@/lib/db/repos/tokens";
 import { processLaunchHotPipeline } from "@/lib/intelligence/launch-hot";
 import { emitBusEvent } from "@/lib/arch/event-bus";
@@ -72,9 +71,6 @@ export async function startIngestor() {
         upsertWatermark({ lastSlot: hwmSlot, lastSig: hwmSig, lastTs: hwmTs })
           .catch((e) => log.warn("watermark upsert failed", { err: String(e) }));
       }
-      await ingestChartEventsFromBatch(batch).catch((e) =>
-        log.warn("chart ingest push failed", { err: String(e) }),
-      );
 
       const creates = batch.filter((e): e is ParsedCreateEvent => e.kind === "create");
       if (creates.length) {

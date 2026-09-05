@@ -4,7 +4,8 @@ import { CHART_TIMEFRAMES, DEFAULT_CHART_TF } from "@/lib/chart/timeframes";
 export { CHART_TIMEFRAMES, DEFAULT_CHART_TF };
 
 /** pump.fun total supply used for unit price ↔ mcap. */
-export const PUMP_SUPPLY = 1e9;
+import { PUMP_SUPPLY } from "@/lib/pump/program";
+export { PUMP_SUPPLY };
 
 export const TF_MS: Record<ChartTimeframe, number> = {
   "1s": 1_000,

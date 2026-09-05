@@ -1,8 +1,8 @@
 import "server-only";
 import type { PriceResolver, PriceQuote } from "@spr/trading";
 import { resolveMintVSol } from "@/lib/pump/resolve-price";
-import { resolveDexPool } from "@/lib/chart/data/dexPool";
-import { fetchOnchainMcap } from "@/lib/chart/data/onchainPrice";
+import { resolveDexPool } from "@/lib/dex/dex-pool";
+import { fetchOnchainMcap } from "@/lib/dex/onchain-price";
 import { effectiveVSolFromMcapUsd } from "@/lib/pricing/seam";
 
 /**
