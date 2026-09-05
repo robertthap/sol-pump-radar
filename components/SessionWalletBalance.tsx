@@ -146,16 +146,6 @@ export function SessionWalletBalance({
           <p className="mt-2 text-[11px] text-muted">
             Cash {demo.balanceSol.toFixed(3)} SOL · Locked in positions {demo.lockedSol.toFixed(3)}{" "}
             SOL
-            {demo.unrealizedPnlSol !== 0 && (
-              <>
-                {" "}
-                · Unrealized{" "}
-                <span className={demo.unrealizedPnlSol >= 0 ? "text-ok" : "text-bad"}>
-                  {demo.unrealizedPnlSol >= 0 ? "+" : ""}
-                  {demo.unrealizedPnlSol.toFixed(4)} SOL
-                </span>
-              </>
-            )}
           </p>
         )}
       </div>

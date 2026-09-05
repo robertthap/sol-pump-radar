@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import dynamic from "next/dynamic";
 import { Play, ShieldCheck, Wallet, ArrowRight } from "lucide-react";
 import { useTradingMode } from "@/components/TradingModeProvider";
@@ -165,13 +164,6 @@ export function LandingPage() {
             </span>
           </button>
         </div>
-
-        <Link
-          href="/market"
-          className="mt-6 text-xs text-muted underline-offset-2 hover:text-fg hover:underline"
-        >
-          Or explore the live market without trading →
-        </Link>
 
         <p className="mt-8 flex items-center gap-1.5 text-center text-[11px] text-muted">
           <ShieldCheck className="h-3.5 w-3.5" />

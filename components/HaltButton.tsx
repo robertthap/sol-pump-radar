@@ -33,7 +33,7 @@ export function HaltButton() {
         type="button"
         disabled={pending}
         onClick={() => start(halt)}
-        className="btn-ghost btn-danger"
+        className="btn-ghost btn-danger min-h-11 cursor-pointer"
       >
         {HALT_LABEL}
       </button>
@@ -41,7 +41,7 @@ export function HaltButton() {
         type="button"
         disabled={pending}
         onClick={() => start(resume)}
-        className="btn-ghost btn-ok"
+        className="btn-ghost btn-ok min-h-11 cursor-pointer"
       >
         {RESUME_LABEL}
       </button>

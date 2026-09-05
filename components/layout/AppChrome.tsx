@@ -8,25 +8,10 @@ const PortalLayout = dynamic(
   () => import("@/components/layout/PortalLayout").then((m) => ({ default: m.PortalLayout })),
   { ssr: false },
 );
-const WorkersStatusBanner = dynamic(
-  () =>
-    import("@/components/WorkersStatusBanner").then((m) => ({
-      default: m.WorkersStatusBanner,
-    })),
-  { ssr: false },
-);
 
-/** Landing uses no shell; mission control is full-screen radar UI. */
+/** Landing (wallet chooser) uses no shell; /trade and /wallet get the top-bar shell. */
 export function AppChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   if (pathname === "/") return <>{children}</>;
-  if (pathname === "/mission" || pathname.startsWith("/mission/")) {
-    return (
-      <>
-        <WorkersStatusBanner deferMs={8_000} />
-        {children}
-      </>
-    );
-  }
   return <PortalLayout>{children}</PortalLayout>;
 }
