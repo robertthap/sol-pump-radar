@@ -4,6 +4,7 @@ import {
   BASELINE_FLOW,
   flowThresholdsFor,
   passesFlowGate,
+  relaxMomentumThresholds,
   type FlowSnapshot,
 } from "@/lib/trade/entry-flow";
 
@@ -98,5 +99,62 @@ describe("momentum thresholds (opt-in)", () => {
       passesFlowGate(snap({ buysM5: 6, sellsM5: 2, buySellRatio: 3, volAcceleration: 0 }), none),
       { allow: true },
     );
+  });
+});
+
+describe("relaxMomentumThresholds — the smart-money boost", () => {
+  const MOM = flowThresholdsFor({ minDexBuysM5: 8, minDexBuySellRatio: 1.0, minDexVolAccel: 0.5 });
+
+  it("halves the opt-in magnitudes", () => {
+    const r = relaxMomentumThresholds(MOM, 0.5);
+    assert.equal(r.minBuys, 4);
+    assert.equal(r.minVolAccel, 0.25);
+  });
+
+  // The whole safety argument for the boost rests on this.
+  it("never touches the baseline dead/dumping rules", () => {
+    const r = relaxMomentumThresholds(MOM, 0.5);
+    assert.equal(r.minTrades, BASELINE_FLOW.minTrades);
+    assert.equal(r.dumpRatio, BASELINE_FLOW.dumpRatio);
+    assert.equal(r.dumpMinTrades, BASELINE_FLOW.dumpMinTrades);
+  });
+
+  it("a dead coin is still rejected under the boost", () => {
+    const r = passesFlowGate(snap({ buysM5: 1, sellsM5: 1 }), relaxMomentumThresholds(MOM, 0.5));
+    assert.equal(r.allow, false);
+    assert.match((r as { reason: string }).reason, /dead/);
+  });
+
+  it("a dumping coin is still rejected under the boost", () => {
+    const dumping = snap({ buysM5: 3, sellsM5: 15, buySellRatio: 0.2, priceChangeM5: -20, volAcceleration: 9 });
+    const r = passesFlowGate(dumping, relaxMomentumThresholds(MOM, 0.5));
+    assert.equal(r.allow, false);
+    assert.match((r as { reason: string }).reason, /dumping/);
+  });
+
+  // A ratio is not a magnitude: halving it would change the rule from
+  // "buyers outnumber sellers" to "sellers may win 2:1".
+  it("leaves minRatio alone", () => {
+    assert.equal(relaxMomentumThresholds(MOM, 0.5).minRatio, MOM.minRatio);
+  });
+
+  it("relaxing a preset with no momentum layer is a no-op", () => {
+    assert.deepEqual(relaxMomentumThresholds(flowThresholdsFor({}), 0.5), flowThresholdsFor({}));
+  });
+
+  it("never relaxes minBuys below 1 — 'some buyers' is the floor", () => {
+    const tiny = flowThresholdsFor({ minDexBuysM5: 1 });
+    assert.equal(relaxMomentumThresholds(tiny, 0.1).minBuys, 1);
+  });
+
+  it("clamps the factor to [0,1] so a bad caller cannot TIGHTEN the gate", () => {
+    assert.equal(relaxMomentumThresholds(MOM, 2).minBuys, MOM.minBuys);
+    assert.equal(relaxMomentumThresholds(MOM, -1).minVolAccel, 0);
+  });
+
+  it("a boosted coin that clears the halved bar passes where it previously failed", () => {
+    const s = snap({ buysM5: 5, sellsM5: 2, buySellRatio: 2.5, volAcceleration: 0.3, priceChangeM5: 1 });
+    assert.equal(passesFlowGate(s, MOM).allow, false, "5 buys < 8 without the boost");
+    assert.equal(passesFlowGate(s, relaxMomentumThresholds(MOM, 0.5)).allow, true);
   });
 });

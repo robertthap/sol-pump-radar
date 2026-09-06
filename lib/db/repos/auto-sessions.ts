@@ -50,6 +50,25 @@ export type AutoSessionParams = {
   minDexBuysM5?: number;
   minDexBuySellRatio?: number;
   minDexVolAccel?: number;
+  /**
+   * Smart-money entry requirement (the "smartMoney" preset). "strong" needs a
+   * watched wallet, or two profiled wallets with edge, buying the mint in the
+   * last 5 minutes; "weak" also accepts a single profiled wallet. Undefined /
+   * "off" leaves entry selection untouched and costs nothing — the signal is
+   * only computed when a session actually asks for it.
+   *
+   * FAILS CLOSED BY OMISSION: `events` holds bonding-curve trades only, so a
+   * watched wallet buying a graduated coin is invisible and reads as no signal.
+   * Requiring "strong" therefore skips trades it should have taken; it never
+   * takes one it should have skipped.
+   */
+  requireSmartMoney?: "off" | "weak" | "strong";
+  /**
+   * Relax this session's own opt-in momentum thresholds by half when the
+   * smart-money signal is strong. Never relaxes the baseline dead/dumping veto
+   * — see relaxMomentumThresholds.
+   */
+  smartMoneyBoost?: boolean;
 };
 
 export type AutoSessionStats = {

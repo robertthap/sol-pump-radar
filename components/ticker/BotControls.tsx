@@ -18,7 +18,7 @@ import { plainSol } from "@/components/ticker/format";
  * are requests, not authority. Nothing here bypasses the breaker, the daily
  * cap, the live gate, the vault, or the worker.
  */
-type Preset = "balanced" | "conservative" | "aggressive" | "scalp" | "momentum";
+type Preset = "balanced" | "conservative" | "aggressive" | "scalp" | "momentum" | "smartMoney";
 
 const RANGES = {
   sizeSol: { min: 0.001, max: 5, hint: "0.001 - 5 SOL" },
@@ -233,13 +233,16 @@ export function BotControls() {
               <option value="aggressive">Aggressive</option>
               <option value="scalp">Scalp (fast turnover)</option>
               <option value="momentum">Momentum (only accelerating coins)</option>
+              <option value="smartMoney">Smart Money (only when watched wallets buy)</option>
             </select>
             <p className="mt-1 text-xs text-muted">
               {preset === "scalp"
                 ? "Small profits, fast slots: banks half at +5%, trails from +6%, cuts anything still flat at 5 min, max 12 min hold. Unproven — being measured."
                 : preset === "momentum"
                   ? "Only enters coins whose trading is accelerating with buyers on top (≥8 buys/5m, buys ≥ sells, volume running ≥1.5× its hourly pace). Exits match Balanced, so selection is the only difference. Expect far fewer trades. Unproven — being measured."
-                  : "Sets take-profit, stop-loss and hold time. Your limits above override its size and cap."}
+                  : preset === "smartMoney"
+                    ? "Only enters when a wallet from your watchlist — or two wallets our stats rate as having an edge — is buying. Exits match Balanced. Expect very few trades: we only see bonding-curve activity, so a watched wallet buying an already-graduated coin is invisible to us. Unproven — being measured."
+                    : "Sets take-profit, stop-loss and hold time. Your limits above override its size and cap."}
             </p>
           </div>
           <button

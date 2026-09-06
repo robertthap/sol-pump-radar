@@ -113,3 +113,28 @@ export function flowThresholdsFor(params: {
     minVolAccel: params.minDexVolAccel,
   };
 }
+
+/**
+ * Ease the OPT-IN momentum thresholds by `factor`, leaving the baseline exactly
+ * as it is. Used by the smart-money boost: "trade a bit more readily when
+ * quality wallets are involved", not "skip the safety checks".
+ *
+ * The baseline is deliberately untouchable here. Its two rules — the coin is
+ * effectively not trading, or is being actively dumped — are not strategy
+ * opinions that a strong signal can outvote. A watched wallet buying a coin
+ * with 2 trades in five minutes is still a coin with 2 trades in five minutes,
+ * and if the boost could relax that we would be back to the 0-buy/$0-volume
+ * entries this gate was written to stop.
+ *
+ * minRatio is also left alone: it is a ratio, not a magnitude, and halving it
+ * would flip "buyers outnumber sellers" into "sellers may outnumber buyers
+ * 2:1", which is a different rule rather than a looser one.
+ */
+export function relaxMomentumThresholds(t: FlowThresholds, factor: number): FlowThresholds {
+  const f = Math.max(0, Math.min(1, factor));
+  return {
+    ...t,
+    minBuys: t.minBuys == null ? t.minBuys : Math.max(1, Math.floor(t.minBuys * f)),
+    minVolAccel: t.minVolAccel == null ? t.minVolAccel : t.minVolAccel * f,
+  };
+}

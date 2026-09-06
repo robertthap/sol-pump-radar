@@ -34,6 +34,33 @@ const PRESETS: Record<string, Partial<AutoSessionParams>> = {
     minDexBuysM5: 8,
     minDexBuySellRatio: 1.0,
     minDexVolAccel: 0.5,
+    // Take the momentum bar at half height when quality wallets are buying.
+    // The baseline dead/dumping veto still applies at full strength.
+    smartMoneyBoost: true,
+    useLearnedAvoids: false,
+  },
+  // Only enter when a wallet worth following is buying. Exits are identical to
+  // `balanced` on purpose, exactly as `momentum` is: entry selection stays the
+  // only variable, so a difference in outcome is attributable to selection.
+  //
+  // UNVALIDATED, and with a known blind spot worth stating plainly: `events`
+  // holds bonding-curve trades only (PUMPSWAP_INGEST off), so a watched wallet
+  // buying a graduated coin is invisible to us. This preset will therefore skip
+  // trades it should have taken. It fails in the safe direction, but expect a
+  // LOW trade count -- across a 40-mint live sample, exactly one mint had any
+  // qualifying buyer at all, and that one was a bundle ring the safety check
+  // rejected. Turning on PumpSwap ingestion is what would make this preset
+  // measurable.
+  smartMoney: {
+    sizeSol: 0.03,
+    maxConcurrent: 5,
+    signalStrictness: "strong_and_moderate",
+    requireSmartMoney: "strong",
+    takeProfitPct: 0.28,
+    stopLossPct: 0.12,
+    maxHoldMinutes: 45,
+    tp1Pct: 0.15,
+    tp1Fraction: 0.5,
     useLearnedAvoids: false,
   },
   // Fast turnover: take a small profit and free the slot in minutes rather than
@@ -62,6 +89,14 @@ const PRESETS: Record<string, Partial<AutoSessionParams>> = {
     // 5 min means it is one of the 61 that never moved.
     stagnationMinutes: 5,
     stagnationMaxPeakPct: 0.03,
+    // Scalp has no momentum thresholds of its own, so this does not currently
+    // change which coins it buys -- it makes the worker RECORD whether smart
+    // money was present at each entry ("smart money present" in the log). That
+    // record is what will answer whether the signal correlates with scalp
+    // winners at all, which nothing in our data can answer today. Costs one
+    // indexed query per candidate; becomes load-bearing if scalp ever gains
+    // minDex* thresholds.
+    smartMoneyBoost: true,
     useLearnedAvoids: false,
   },
   balanced: {

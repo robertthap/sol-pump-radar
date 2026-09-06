@@ -50,7 +50,9 @@ import { resolveEntryVSol } from "@/lib/pump/resolve-price";
 import { fetchPumpFunCoin } from "@/lib/pump/fun-api";
 import { mcapUsdFromVSol, effectiveVSolFromMcapUsd } from "@/lib/dex/curve-mcap";
 import { fetchDexMarketBatchCached } from "@/lib/dex/snapshot-cache";
-import { flowThresholdsFor, passesFlowGate } from "@/lib/trade/entry-flow";
+import { flowThresholdsFor, passesFlowGate, relaxMomentumThresholds } from "@/lib/trade/entry-flow";
+import { meetsSmartMoneyRequirement, smartMoneySignal } from "@/lib/trade/smart-money";
+import { fetchSmartMoneyBuyers } from "@/lib/db/repos/smart-money-buyers";
 import { latestVSolBatch } from "@/lib/db/repos/events";
 import { VSOL_MODULE_KEY } from "@/lib/intelligence/scored-mint-adapter";
 import { paperOpen, paperClose, paperPartialClose, getPaperConfig } from "@/lib/paper/engine";
@@ -1331,11 +1333,44 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     // was buying coins with 0 buys and $0 of 5m volume. The momentum half is
     // opt-in per session (the "momentum" preset). Mints with no DEX snapshot are
     // untouched, so fresh-curve and genesis entries are unaffected.
-    const flow = passesFlowGate(dexSnap, flowThresholdsFor(session.params));
+    // Smart money: is a watched wallet, or a wallet our stats rate as having an
+    // edge, buying this coin right now? Computed BEFORE the flow gate because
+    // the boost adjusts that gate's thresholds. Only computed when the session
+    // asks for it -- this is one query per candidate on the entry path, and the
+    // default presets must not pay for a feature they do not use.
+    const requireSmart = session.params.requireSmartMoney ?? "off";
+    const wantsSmart = requireSmart !== "off" || session.params.smartMoneyBoost === true;
+    const smart = wantsSmart
+      ? smartMoneySignal(
+          await fetchSmartMoneyBuyers(d.mint).catch((e) => {
+            // A failed lookup must not silently read as "no smart money" for a
+            // session that REQUIRES it -- that would turn a database hiccup into
+            // a total entry halt with no explanation.
+            log.warn("smart-money lookup failed", { mint: d.mint, err: String(e) });
+            return { watchlistBuyers: [], profiledBuyers: [] };
+          }),
+        )
+      : null;
+
+    // The boost eases only this session's opt-in momentum thresholds, and only
+    // on a strong signal. The baseline dead/dumping veto is never relaxed.
+    const boosted = session.params.smartMoneyBoost === true && smart?.tier === "strong";
+    const thresholds = flowThresholdsFor(session.params);
+    const flow = passesFlowGate(dexSnap, boosted ? relaxMomentumThresholds(thresholds, 0.5) : thresholds);
     if (!flow.allow) {
-      log.info("auto skipped (flow)", { mint: d.mint, reason: flow.reason });
+      log.info("auto skipped (flow)", { mint: d.mint, reason: flow.reason, boosted });
       bumpTransient(d.mint, flow.reason);
       continue;
+    }
+
+    if (smart && !meetsSmartMoneyRequirement(smart.tier, requireSmart)) {
+      const reason = `smart money ${smart.tier} < ${requireSmart}: ${smart.reason}`;
+      log.info("auto skipped (smart money)", { mint: d.mint, reason });
+      bumpTransient(d.mint, reason.slice(0, 80));
+      continue;
+    }
+    if (smart && smart.tier !== "none") {
+      log.info("smart money present", { mint: d.mint, tier: smart.tier, reason: smart.reason, boosted });
     }
     const insider = await analyzeMintInsiders(d.mint);
     // Entry-activity floor (data-driven, refined 2026-06-15 on 320 trades). Require,

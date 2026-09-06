@@ -175,6 +175,10 @@ async function buildTicker(): Promise<TickerResponse> {
       stagnationMinutes: params.stagnationMinutes ?? params.maxHoldMinutes * 0.4,
       stagnationMaxPeakPct: params.stagnationMaxPeakPct ?? params.trailingArmPct ?? 0,
       todayLossSol: todayLoss,
+      smartMoney: {
+        require: params.requireSmartMoney ?? "off",
+        boost: params.smartMoneyBoost === true,
+      },
       liveExecution: e.LIVE_EXECUTION,
       liveDryRun: e.LIVE_DRY_RUN,
       defaults: {

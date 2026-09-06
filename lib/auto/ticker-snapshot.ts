@@ -263,6 +263,10 @@ export type TickerResponse = {
     stagnationMinutes: number;
     stagnationMaxPeakPct: number;
     todayLossSol: number;
+    /** Smart-money entry requirement in force, and whether the boost is on.
+     *  Read-only: "why is it not buying anything?" must be answerable from
+     *  the screen, and "requireSmartMoney: strong" is a common answer. */
+    smartMoney: { require: "off" | "weak" | "strong"; boost: boolean };
     liveExecution: "on" | "off";
     liveDryRun: "on" | "off";
     /** Prefill for the controls when no session exists. */
