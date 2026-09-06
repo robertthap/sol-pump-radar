@@ -49,6 +49,7 @@ import { resolveEntryVSol } from "@/lib/pump/resolve-price";
 import { fetchPumpFunCoin } from "@/lib/pump/fun-api";
 import { mcapUsdFromVSol, effectiveVSolFromMcapUsd } from "@/lib/dex/curve-mcap";
 import { fetchDexMarketBatchCached } from "@/lib/dex/snapshot-cache";
+import { flowThresholdsFor, passesFlowGate } from "@/lib/trade/entry-flow";
 import { latestVSolBatch } from "@/lib/db/repos/events";
 import { VSOL_MODULE_KEY } from "@/lib/intelligence/scored-mint-adapter";
 import { paperOpen, paperClose, paperPartialClose, getPaperConfig } from "@/lib/paper/engine";
@@ -1307,20 +1308,15 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     // is blind for them. DexScreener 5m aggregates are the only flow signal we
     // have — capture them for the learner AND use them for a conservative gate.
     const dexSnap = (await fetchDexMarketBatchCached([d.mint]).catch(() => null))?.get(d.mint) ?? null;
-    // Don't buy into a coin that's being actively dumped: enough activity to be
-    // meaningful, sellers clearly dominating, and price not rising. Conservative
-    // (requires both net selling AND a non-positive 5m move) so it filters obvious
-    // weakness without choking off normal entries.
-    if (
-      !v2Mode &&
-      dexSnap &&
-      dexSnap.buysM5 + dexSnap.sellsM5 >= 6 &&
-      dexSnap.buySellRatio < 0.7 &&
-      (dexSnap.priceChangeM5 ?? 0) <= 0
-    ) {
-      const reason = `net selling b/s=${dexSnap.buySellRatio.toFixed(2)} Δ5m=${(dexSnap.priceChangeM5 ?? 0).toFixed(1)}%`;
-      log.info("auto skipped (order-flow)", { mint: d.mint, reason });
-      bumpTransient(d.mint, reason);
+    // DEX order-flow gate. The BASELINE half runs in every mode including
+    // v2_simple -- v2 reduces entry to "intelligence >= 0.5 AND rug < 0.7", which
+    // was buying coins with 0 buys and $0 of 5m volume. The momentum half is
+    // opt-in per session (the "momentum" preset). Mints with no DEX snapshot are
+    // untouched, so fresh-curve and genesis entries are unaffected.
+    const flow = passesFlowGate(dexSnap, flowThresholdsFor(session.params));
+    if (!flow.allow) {
+      log.info("auto skipped (flow)", { mint: d.mint, reason: flow.reason });
+      bumpTransient(d.mint, flow.reason);
       continue;
     }
     const insider = await analyzeMintInsiders(d.mint);

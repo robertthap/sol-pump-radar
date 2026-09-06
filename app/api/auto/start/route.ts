@@ -63,6 +63,15 @@ export async function POST(req: Request) {
   ) {
     return NextResponse.json({ error: "stagnationMaxPeakPct out of range" }, { status: 400 });
   }
+  if (merged.minDexBuysM5 != null && (merged.minDexBuysM5 < 0 || merged.minDexBuysM5 > 1000)) {
+    return NextResponse.json({ error: "minDexBuysM5 out of range" }, { status: 400 });
+  }
+  if (merged.minDexBuySellRatio != null && (merged.minDexBuySellRatio < 0 || merged.minDexBuySellRatio > 100)) {
+    return NextResponse.json({ error: "minDexBuySellRatio out of range" }, { status: 400 });
+  }
+  if (merged.minDexVolAccel != null && (merged.minDexVolAccel < 0 || merged.minDexVolAccel > 100)) {
+    return NextResponse.json({ error: "minDexVolAccel out of range" }, { status: 400 });
+  }
 
   const { correlationId } = await queueWebCommand(
     WebWriteOp.AUTO_SESSION_START,

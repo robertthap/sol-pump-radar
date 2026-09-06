@@ -9,6 +9,33 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const PRESETS: Record<string, Partial<AutoSessionParams>> = {
+  // Only enter coins whose trading is ACCELERATING with buyers on top.
+  // Exits are identical to `balanced` on purpose: entry selectivity is the only
+  // variable, so any difference in outcome is attributable to selection alone.
+  //
+  // Thresholds picked against the live ledger -- of 18 recent entries, 3 clear
+  // these, including the ones with real flow, while the 0-buy/$0-volume and
+  // 5-buy/17-sell entries are rejected. There is deliberately NO price threshold:
+  // a 320-trade analysis found winners had NEGATIVE 5m price change at entry, so
+  // requiring a rising price buys the local top. volAcceleration measures whether
+  // the last 5 minutes are running hot versus the coin's own hourly pace.
+  //
+  // UNVALIDATED: in that same 18-trade sample every trade lost, including the
+  // high-momentum ones. This cuts trade count; it is not yet shown to cut losses.
+  momentum: {
+    sizeSol: 0.03,
+    maxConcurrent: 5,
+    signalStrictness: "strong_and_moderate",
+    takeProfitPct: 0.28,
+    stopLossPct: 0.12,
+    maxHoldMinutes: 45,
+    tp1Pct: 0.15,
+    tp1Fraction: 0.5,
+    minDexBuysM5: 8,
+    minDexBuySellRatio: 1.0,
+    minDexVolAccel: 0.5,
+    useLearnedAvoids: false,
+  },
   // Fast turnover: take a small profit and free the slot in minutes rather than
   // holding for a big move. A HYPOTHESIS, not a validated setting -- every number
   // below is reasoned from the ledger (81% of trades never beat +3% and won 0 of

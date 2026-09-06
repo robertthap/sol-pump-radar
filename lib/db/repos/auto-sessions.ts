@@ -41,6 +41,15 @@ export type AutoSessionParams = {
    */
   stagnationMinutes?: number;
   stagnationMaxPeakPct?: number;
+  /**
+   * Opt-in DEX order-flow entry gate (the "momentum" preset). Undefined leaves
+   * only the always-on baseline, which rejects coins that are not trading or are
+   * being dumped. Deliberately no price threshold: winners historically had
+   * NEGATIVE 5m price change at entry, so chasing a pump buys the local top.
+   */
+  minDexBuysM5?: number;
+  minDexBuySellRatio?: number;
+  minDexVolAccel?: number;
 };
 
 export type AutoSessionStats = {
