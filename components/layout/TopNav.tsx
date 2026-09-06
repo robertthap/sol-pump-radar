@@ -60,7 +60,9 @@ export function TopNav() {
     try {
       const res = await submitDemoReset();
       if (!res.ok) window.alert(res.error ?? "Demo reset failed");
-      else await refresh();
+      // submitDemoReset waits for DEMO_RESET_COMPLETED, so the ledger really has
+      // changed by here — force past both caches or the screen shows the old numbers.
+      else await refresh({ force: true });
     } catch (e) {
       window.alert(e instanceof Error ? e.message : String(e));
     } finally {

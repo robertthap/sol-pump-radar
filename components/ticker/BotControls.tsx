@@ -89,7 +89,7 @@ export function BotControls() {
       const j = await submitAutoQuickStart({ preset, ...v });
       if (!j.ok) setMsg({ tone: "bad", text: `Start failed: ${j.error ?? "unknown"}. Check the worker is running and try again.` });
       else setMsg({ tone: "ok", text: `Bot started - ${v.sizeSol} SOL per trade, up to ${v.maxConcurrent} open.` });
-      await Promise.all([refresh(), refreshMode()]);
+      await Promise.all([refresh(), refreshMode({ force: true })]);
     } catch (e) {
       setMsg({ tone: "bad", text: `Start failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
@@ -105,7 +105,7 @@ export function BotControls() {
       const j = await submitAutoStop("ticker_stop");
       if (!j.ok) setMsg({ tone: "bad", text: `Stop failed: ${j.error ?? "unknown"}. Try again.` });
       else setMsg({ tone: "ok", text: "Bot stopped. Open positions stay managed until they close." });
-      await Promise.all([refresh(), refreshMode()]);
+      await Promise.all([refresh(), refreshMode({ force: true })]);
     } catch (e) {
       setMsg({ tone: "bad", text: `Stop failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally {

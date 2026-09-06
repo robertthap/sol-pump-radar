@@ -73,7 +73,7 @@ export function SessionWalletBalance({
     try {
       const res = await submitDemoReset();
       if (!res.ok) window.alert(res.error ?? "Demo reset failed");
-      else await refresh();
+      else await refresh({ force: true });
     } catch (e) {
       window.alert(e instanceof Error ? e.message : String(e));
     } finally {

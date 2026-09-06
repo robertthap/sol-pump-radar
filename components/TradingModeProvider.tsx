@@ -52,7 +52,9 @@ type ModeState = {
   setMode: (m: UiTradingMode) => Promise<void>;
   /** End the current Demo or Real session and return to the home wallet chooser. */
   exitSession: () => Promise<void>;
-  refresh: () => Promise<void>;
+  /** `force` bypasses both the hydrate guard and the server cache — use it after
+   *  an action that just changed the data (reset, mode change, start/stop). */
+  refresh: (opts?: { force?: boolean }) => Promise<void>;
   /** Trade bootstrap can push mode once and skip duplicate polls. */
   hydrate: (payload: ModeLitePayload) => void;
 };
@@ -135,13 +137,16 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
     [applyModePayload],
   );
 
-  const refresh = useCallback(async () => {
-    // /trade: the ticker pushes mode state with every poll (hydrate). Skip our own
-    // request while that is fresh so /api/ticker stays the page's only repeating call.
-    if (pathname.startsWith("/trade") && Date.now() - hydratedAt.current < HYDRATE_FRESH_MS) return;
+  const refresh = useCallback(async (opts?: { force?: boolean }) => {
+    const force = opts?.force === true;
+    // /trade: the ticker pushes mode state with every poll (hydrate), so the
+    // periodic refresh is redundant there. An EXPLICIT refresh is never skipped —
+    // dropping it silently is how a demo reset appeared to do nothing.
+    if (!force && pathname.startsWith("/trade") && Date.now() - hydratedAt.current < HYDRATE_FRESH_MS) return;
     const full = needsFullDemo(pathname);
-    const endpoint = full ? "/api/settings/mode" : "/api/settings/mode-lite";
-    const j = await getJson<ModeLitePayload>(endpoint, full ? 0 : 12_000);
+    const base = full ? "/api/settings/mode" : "/api/settings/mode-lite";
+    const endpoint = force && !full ? `${base}?fresh=1` : base;
+    const j = await getJson<ModeLitePayload>(endpoint, force ? 0 : full ? 0 : 12_000);
     if (!j) return;
     applyModePayload(j);
   }, [pathname, applyModePayload]);
