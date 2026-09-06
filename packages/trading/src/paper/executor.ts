@@ -236,6 +236,14 @@ export async function openPosition(
   });
 }
 
+/**
+ * Cap on the return an exit-price OVERRIDE may imply. Overrides are force-close
+ * bookkeeping (orphan sweep, stale timeout), not live fills; a genuine >10x that
+ * the exit logic never acted on is not credible, so anything past this is a
+ * basis error. See lib/paper/close-price.ts for the full incident.
+ */
+const MAX_OVERRIDE_ABS_PCT = 10;
+
 export async function closePosition(
   intent: CloseIntent,
   config: PaperRuntimeConfig,
@@ -262,6 +270,25 @@ export async function closePosition(
 
   const override = intent.exitPriceOverride;
   const useOverride = override != null && Number.isFinite(override) && override > 0;
+  // Last line of defence against a price-basis mismatch. Position value scales as
+  // vSol SQUARED, so an override on the wrong basis books a squared error: a mark
+  // 10x off the entry becomes +11,000%. That really happened (+26.7 and +68.6 SOL
+  // booked on 0.24/0.08 SOL positions) because a force-close passed through a
+  // mark-to-market price written on the mcap basis. Callers are expected to have
+  // reconciled the basis (lib/paper/close-price.ts); this refuses the rest rather
+  // than writing fiction into the ledger.
+  if (useOverride) {
+    const impliedPct = (override / row.entry_price) ** 2 - 1;
+    if (!Number.isFinite(impliedPct) || Math.abs(impliedPct) > MAX_OVERRIDE_ABS_PCT) {
+      return {
+        ok: false,
+        code: "BAD_PRICE",
+        reason:
+          `exit override ${override} vs entry ${row.entry_price} implies ` +
+          `${(impliedPct * 100).toFixed(0)}% — refusing (likely a price-basis mismatch)`,
+      };
+    }
+  }
   let quote: PriceQuote;
   if (useOverride) {
     quote = { mint: row.mint, price: override, referenceVSol: override };

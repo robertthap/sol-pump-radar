@@ -118,3 +118,25 @@ is not installed (needs a Postgres restart), so this rests on `pg_stat_database`
 | Pre-existing dead API routes | Had no consumer before the rebuild either: `/api/auto/start /api/bots/flags /api/continuation/compare /api/continuation/eval /api/creates/live /api/dex/embed /api/events/recent /api/intelligence/evaluate /api/nav/status /api/paper/history /api/paper/reset /api/paper/snapshot /api/runtime/postgres /api/tokens/top /api/watchlist`. Left alone. |
 | Single Sell on a graduated coin | Demo sells price off the frozen curve; the row passes its mcap-derived `currentVSol` as the route's hint, so it works — but only because the hint exists. |
 | Historical docs | `SYSTEM_DESIGN.md`, `ARCHITECTURE*.md`, `PROJECT_STATUS.md`, `LOCALHOST_PROFILE.md` still describe the chart system and deleted pages as design history; `README.md` and `operations.md` are current. |
+
+## Fabricated closes in `domain_events` (do not mine these as wins)
+
+Before the price-basis fix (`lib/paper/close-price.ts`), two force-close paths —
+`session_ended` in `sweepOrphanedOpenPositions` and `timeout_stale` — closed positions at the raw
+stored `current_price`. For a graduated coin that value is on the **mcap-derived** basis
+(`effectiveVSolFromMcapUsd`), while `entry_price` is on the **bonding-curve** basis. Paper P&L is
+`(exit/entry)² − 1`, so a 10× basis error became a 100× fake profit.
+
+Four closes are affected. The positions themselves were removed by later demo resets, but the
+events remain — `domain_events` is an audit trail and is deliberately left intact:
+
+| position | reason | booked pct | booked SOL |
+|---|---|---|---|
+| 1252 | `session_ended` | +85,749% | +68.599 |
+| 1251 | `session_ended` | +27,537% | +27.537 |
+| 1289 | `session_ended` | +11,115% | +26.676 |
+| 1249 | `session_ended` | +1,169% | +1.169 |
+
+**None of this ~+124 SOL was ever real.** The same artifact inflates the 2026-06-02 session
+remembered as +49.9 SOL (average +501% per trade). Any analysis over `PAPER_TRADE_CLOSED` should
+filter `abs((payload->>'pctOfSize')::numeric) > 1.0` when looking at history from before this fix.

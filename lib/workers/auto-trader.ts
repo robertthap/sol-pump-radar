@@ -33,6 +33,7 @@ import { recordPostExitSnapshot } from "@/lib/db/repos/measurement";
 import { evaluateGenesisSnipe } from "@/lib/intelligence/genesis-snipe";
 import { fetchGenesisSnipeCandidates } from "@/lib/db/repos/genesis-signals";
 import { markPnl } from "@/lib/pricing/seam";
+import { safeExitVSol } from "@/lib/paper/close-price";
 import { riskBudgetFor } from "@/lib/risk/presets";
 import { peekKeypair } from "@/lib/wallet/session";
 import { fetchMintFlags } from "@/lib/db/repos/bots";
@@ -400,12 +401,21 @@ async function sweepOrphanedOpenPositions(): Promise<void> {
   }).rows;
   if (rows.length === 0) return;
   for (const pos of rows) {
-    const price = pos.current_price != null && pos.current_price > 0 ? pos.current_price : pos.entry_price;
+    // NEVER book raw current_price: mark-to-market writes it on the MCAP basis for
+    // graduated coins while entry_price is on the CURVE basis, and the curve model
+    // squares the difference. That fabricated +26.7 and +68.6 SOL "profits" on
+    // 0.24/0.08 SOL positions. Implausible marks close flat instead.
+    const safe = safeExitVSol({ entryVSol: pos.entry_price, candidateVSol: pos.current_price });
+    if (safe.mismatch) {
+      log.warn("sweep: rejected implausible mark, closing flat", {
+        id: pos.id, mint: pos.mint, reason: safe.reason,
+      });
+    }
     const closed = await paperClose({
       positionId: BigInt(pos.id),
       reason: "session_ended",
       correlationId: `sweep-${pos.id}`,
-      exitPriceOverride: price,
+      exitPriceOverride: safe.exitVSol,
     });
     if (closed.ok) {
       log.info("swept orphaned open position (no active session)", {
@@ -501,8 +511,16 @@ async function handleExits(session: AutoSessionDto) {
           pos.opened_at instanceof Date ? pos.opened_at.getTime() : new Date(pos.opened_at).getTime();
         const staleAgeMs = Date.now() - openedAtMs;
         if (staleAgeMs < maxHoldMs) continue;
-        const fallbackPrice =
-          pos.current_price != null && pos.current_price > 0 ? pos.current_price : pos.entry_v_sol;
+        // Same basis guard as the orphan sweep: the stored mark may be on the
+        // mcap basis while entry_v_sol is on the curve basis, and the curve model
+        // squares the gap. An implausible mark closes flat rather than booking fiction.
+        const staleSafe = safeExitVSol({ entryVSol: pos.entry_v_sol, candidateVSol: pos.current_price });
+        if (staleSafe.mismatch) {
+          log.warn("stale close: rejected implausible mark, closing flat", {
+            id: pos.id, mint: pos.mint, reason: staleSafe.reason,
+          });
+        }
+        const fallbackPrice = staleSafe.exitVSol;
         const id = BigInt(pos.id);
         const closed = await paperClose({
           positionId: id,
