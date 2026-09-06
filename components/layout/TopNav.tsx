@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LogOut, Menu, RotateCcw, X } from "lucide-react";
 import { useTradingMode } from "@/components/TradingModeProvider";
-import { useTickerOptional } from "@/components/ticker/TickerProvider";
+import { clearTickerSeries, useTickerOptional } from "@/components/ticker/TickerProvider";
 import { ModeGlossary } from "@/components/ModeGlossary";
 import { submitDemoReset } from "@/lib/trade-client";
 
@@ -60,9 +60,15 @@ export function TopNav() {
     try {
       const res = await submitDemoReset();
       if (!res.ok) window.alert(res.error ?? "Demo reset failed");
-      // submitDemoReset waits for DEMO_RESET_COMPLETED, so the ledger really has
-      // changed by here — force past both caches or the screen shows the old numbers.
-      else await refresh({ force: true });
+      else {
+        // The sparkline is a per-tab buffer the server knows nothing about; without
+        // this it keeps drawing the pre-reset curve over a wiped account. This nav
+        // renders outside TickerProvider, so it broadcasts rather than calling in.
+        clearTickerSeries();
+        // submitDemoReset waits for DEMO_RESET_COMPLETED, so the ledger really has
+        // changed by here — force past both caches or the screen shows the old numbers.
+        await refresh({ force: true });
+      }
     } catch (e) {
       window.alert(e instanceof Error ? e.message : String(e));
     } finally {

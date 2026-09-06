@@ -39,6 +39,8 @@ type TickerState = {
   /** Series for the current target - live, this tab only. */
   series: SeriesPoint[];
   refresh: () => Promise<void>;
+  /** Wipe the recorded P&L history (storage + memory) — used by the demo reset. */
+  clearSeries: () => void;
   /** One throttled, human sentence for the status live region. */
   statusSentence: string;
 };
@@ -62,6 +64,27 @@ function loadSeries(): Record<string, SeriesPoint[]> {
   } catch {
     return {};
   }
+}
+
+/** Broadcast so a mounted provider drops its IN-MEMORY series too. */
+const SERIES_CLEARED_EVENT = "spr:ticker-series-cleared";
+
+/**
+ * Drop the recorded P&L history for this tab.
+ *
+ * Callable from anywhere: TopNav renders OUTSIDE TickerProvider, so it cannot
+ * reach the provider's state directly -- clearing only storage there left the
+ * in-memory series alive, and the next poll wrote it straight back. The event
+ * closes that gap without coupling the nav to the provider's position in the
+ * tree. Also safe on /wallet, where no provider is mounted at all.
+ */
+export function clearTickerSeries() {
+  try {
+    sessionStorage.removeItem(SERIES_KEY);
+  } catch {
+    /* storage unavailable - nothing to clear */
+  }
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(SERIES_CLEARED_EVENT));
 }
 
 function saveSeries(s: Record<string, SeriesPoint[]>) {
@@ -100,6 +123,16 @@ export function TickerProvider({ children }: { children: ReactNode }) {
   // Restore live-session history for this tab (not durable history).
   useEffect(() => {
     setSeriesMap(loadSeries());
+  }, []);
+
+  // A demo reset wipes the ledger; the recorded curve must go with it.
+  useEffect(() => {
+    const onCleared = () => {
+      setSeriesMap({});
+      setTarget({ kind: "portfolio" });
+    };
+    window.addEventListener(SERIES_CLEARED_EVENT, onCleared);
+    return () => window.removeEventListener(SERIES_CLEARED_EVENT, onCleared);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -189,9 +222,13 @@ export function TickerProvider({ children }: { children: ReactNode }) {
 
   const series = useMemo(() => seriesMap[targetKey(target)] ?? [], [seriesMap, target]);
 
+  // clearTickerSeries() broadcasts; the listener above does the state work, so
+  // this behaves identically whether called from inside or outside the provider.
+  const clearSeries = useCallback(() => clearTickerSeries(), []);
+
   const value = useMemo<TickerState>(
-    () => ({ data, error, lastOkAt, now, pollMs, target, setTarget, series, refresh, statusSentence }),
-    [data, error, lastOkAt, now, pollMs, target, series, refresh, statusSentence],
+    () => ({ data, error, lastOkAt, now, pollMs, target, setTarget, series, refresh, clearSeries, statusSentence }),
+    [data, error, lastOkAt, now, pollMs, target, series, refresh, clearSeries, statusSentence],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -144,7 +144,25 @@ export async function executeDemoWalletReset(): Promise<DemoAccountSnapshot> {
     DELETE FROM paper_trade_fills
     WHERE position_id IN (SELECT id FROM paper_positions WHERE ${demoWalletTradeSql})
   `);
+  // Sampled P&L paths belong to those positions; leaving them behind orphans
+  // research data against ids that no longer exist. Deleted BEFORE the positions
+  // so the subquery can still resolve them.
+  await getDb()
+    .execute(sql`
+      DELETE FROM position_marks
+      WHERE position_id IN (SELECT id FROM paper_positions WHERE ${demoWalletTradeSql})
+    `)
+    .catch(() => undefined);
   await getDb().execute(sql`DELETE FROM paper_positions WHERE ${demoWalletTradeSql}`);
+  // Self-healing: sweep marks whose position no longer exists at all. Resets
+  // before this cleanup left orphans behind, and "reset the account" should
+  // leave nothing pointing at trades that are gone.
+  await getDb()
+    .execute(sql`
+      DELETE FROM position_marks m
+      WHERE NOT EXISTS (SELECT 1 FROM paper_positions p WHERE p.id = m.position_id)
+    `)
+    .catch(() => undefined);
 
   // 2. Reset the virtual wallet ledger + the display PnL offset to a fresh start.
   await setDemoPnlOffset(0);

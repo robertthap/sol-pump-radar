@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useTradingMode } from "@/components/TradingModeProvider";
+import { clearTickerSeries } from "@/components/ticker/TickerProvider";
 import { submitDemoReset } from "@/lib/trade-client";
 import { useSolPrice, solToAudDisplay } from "@/lib/ui/useSolUsd";
 
@@ -73,7 +74,10 @@ export function SessionWalletBalance({
     try {
       const res = await submitDemoReset();
       if (!res.ok) window.alert(res.error ?? "Demo reset failed");
-      else await refresh({ force: true });
+      else {
+        clearTickerSeries();
+        await refresh({ force: true });
+      }
     } catch (e) {
       window.alert(e instanceof Error ? e.message : String(e));
     } finally {
