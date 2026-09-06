@@ -147,6 +147,14 @@ export function BotControls() {
               cls={bot.maxConcurrent !== bot.effectiveMaxConcurrent ? "text-warn" : undefined}
             />
             <RO k="Exit rules" v={`TP +${(bot.takeProfitPct * 100).toFixed(0)}% · SL -${(bot.stopLossPct * 100).toFixed(0)}% · ${bot.maxHoldMinutes} min hold`} />
+            <RO
+              k="Flat-position cut"
+              v={
+                bot.stagnationMinutes > 0
+                  ? `${Math.round(bot.stagnationMinutes)} min if peak < +${(bot.stagnationMaxPeakPct * 100).toFixed(0)}%`
+                  : "off"
+              }
+            />
             {data?.session?.mode === "live" && (
               <RO k="Live" v={`execution ${bot.liveExecution}${bot.liveDryRun === "on" ? " · DRY RUN" : ""}`} cls={bot.liveExecution === "on" && bot.liveDryRun !== "on" ? "text-bad" : "text-warn"} />
             )}

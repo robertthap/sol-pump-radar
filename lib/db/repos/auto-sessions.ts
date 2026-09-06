@@ -33,6 +33,14 @@ export type AutoSessionParams = {
    */
   trailingArmPct?: number;
   trailingStopPct?: number;
+  /**
+   * Flat-position cut: close a position that never exceeded
+   * `stagnationMaxPeakPct` by this age, freeing the slot for a fresh signal.
+   * Historically this was hard-coded at 0.4 x maxHoldMinutes with the ceiling
+   * pinned to `trailingArmPct`; both defaults preserve that exactly.
+   */
+  stagnationMinutes?: number;
+  stagnationMaxPeakPct?: number;
 };
 
 export type AutoSessionStats = {

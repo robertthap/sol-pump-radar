@@ -431,6 +431,12 @@ async function handleExits(session: AutoSessionDto) {
   const trailArmPct = session.params.trailingArmPct ?? 0;
   const trailStopPct = session.params.trailingStopPct ?? 0;
   const trailingEnabled = trailArmPct > 0 && trailStopPct > 0;
+  // Flat-position cut. Defaults reproduce the historical hard-code exactly:
+  // 40% of max-hold, ceiling = the trail-arm threshold.
+  const stagnationMs = Math.round(
+    (session.params.stagnationMinutes ?? session.params.maxHoldMinutes * 0.4) * 60_000,
+  );
+  const stagnationMaxPeakPct = session.params.stagnationMaxPeakPct ?? trailArmPct;
   const budget = riskBudgetFor(env().RISK_PRESET);
 
   if (session.mode === "paper") {
@@ -689,9 +695,9 @@ async function handleExits(session: AutoSessionDto) {
             maxHoldMs,
             trailArmPct: trailingEnabled ? trailArmPct : 0,
             trailStopPct: trailingEnabled ? trailStopPct : 0,
-            // Free capital from coins that never built momentum: if a position hasn't
-            // armed the trail (never reached +trailArmPct) by 40% of max-hold, cut it.
-            stagnationMs: trailingEnabled ? Math.round(maxHoldMs * 0.4) : 0,
+            // Free capital from coins that never built momentum.
+            stagnationMs: trailingEnabled ? stagnationMs : 0,
+            stagnationMaxPeakPct,
           });
       if (!exit) continue;
 

@@ -108,6 +108,41 @@ describe("decidePaperExit", () => {
     assert.equal(decidePaperExit(0.02, 0.05, 35 * 60_000, P), "timeout"); // exactly maxHoldMs
   });
 
+  // stagnationMaxPeakPct: the ceiling is what a position's PEAK must stay under
+  // to be considered flat. It defaults to trailArmPct so omitting it reproduces
+  // the historical "never armed the trail" rule exactly.
+  it("ceiling defaults to trailArmPct — a position that peaked above the arm is never cut", () => {
+    const withStag = { ...P, stagnationMs: 10 * 60_000 };
+    // peaked +20% (>= arm 0.15): armed, so the stagnation branch is unreachable.
+    assert.equal(decidePaperExit(0.16, 0.2, 30 * 60_000, withStag), null);
+  });
+
+  it("an explicit ceiling below the arm spares a position that moved a little", () => {
+    // Scalp-style: arm at 15% but only cut what never beat +3%.
+    const tight = { ...P, stagnationMs: 5 * 60_000, stagnationMaxPeakPct: 0.03 };
+    // peaked +5% — above the 3% ceiling, so NOT flat: held despite being past the age.
+    assert.equal(decidePaperExit(0.04, 0.05, 11 * 60_000, tight), null);
+    // peaked +2% — under the ceiling: cut.
+    assert.equal(decidePaperExit(0.01, 0.02, 11 * 60_000, tight), "stagnation");
+  });
+
+  it("the ceiling is exclusive at the boundary (peak == ceiling is not flat)", () => {
+    const tight = { ...P, stagnationMs: 5 * 60_000, stagnationMaxPeakPct: 0.03 };
+    assert.equal(decidePaperExit(0.03, 0.03, 11 * 60_000, tight), null);
+  });
+
+  it("a ceiling of 0 disables the cut without disabling the trail", () => {
+    const noCut = { ...P, stagnationMs: 5 * 60_000, stagnationMaxPeakPct: 0 };
+    assert.equal(decidePaperExit(0.01, 0.02, 30 * 60_000, noCut), null);
+    // ...but max-hold still applies.
+    assert.equal(decidePaperExit(0.01, 0.02, 35 * 60_000, noCut), "timeout");
+  });
+
+  it("stop-loss still pre-empts a stagnation cut on the same tick", () => {
+    const withStag = { ...P, stagnationMs: 5 * 60_000 };
+    assert.equal(decidePaperExit(-0.13, 0.01, 11 * 60_000, withStag), "sl");
+  });
+
   it("stagnation is suppressed when stagnationMs is absent or 0", () => {
     assert.equal(decidePaperExit(0.03, 0.05, 11 * 60_000, P), null);
     assert.equal(decidePaperExit(0.03, 0.05, 11 * 60_000, { ...P, stagnationMs: 0 }), null);

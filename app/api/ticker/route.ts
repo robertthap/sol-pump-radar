@@ -171,6 +171,9 @@ async function buildTicker(): Promise<TickerResponse> {
       takeProfitPct: params.takeProfitPct,
       stopLossPct: params.stopLossPct,
       maxHoldMinutes: params.maxHoldMinutes,
+      // Resolved the same way the worker resolves them (auto-trader handleExits).
+      stagnationMinutes: params.stagnationMinutes ?? params.maxHoldMinutes * 0.4,
+      stagnationMaxPeakPct: params.stagnationMaxPeakPct ?? params.trailingArmPct ?? 0,
       todayLossSol: todayLoss,
       liveExecution: e.LIVE_EXECUTION,
       liveDryRun: e.LIVE_DRY_RUN,

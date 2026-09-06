@@ -258,6 +258,10 @@ export type TickerResponse = {
     takeProfitPct: number;
     stopLossPct: number;
     maxHoldMinutes: number;
+    /** Flat-position cut: close a position whose peak never beat
+     *  stagnationMaxPeakPct by this age. Effective values, defaults resolved. */
+    stagnationMinutes: number;
+    stagnationMaxPeakPct: number;
     todayLossSol: number;
     liveExecution: "on" | "off";
     liveDryRun: "on" | "off";

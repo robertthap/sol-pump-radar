@@ -51,6 +51,18 @@ export async function POST(req: Request) {
   if (merged.maxDailyLossSol <= 0 || merged.maxDailyLossSol > 1000) {
     return NextResponse.json({ error: "maxDailyLossSol out of range" }, { status: 400 });
   }
+  if (
+    merged.stagnationMinutes != null &&
+    (merged.stagnationMinutes < 1 || merged.stagnationMinutes > 240)
+  ) {
+    return NextResponse.json({ error: "stagnationMinutes out of range" }, { status: 400 });
+  }
+  if (
+    merged.stagnationMaxPeakPct != null &&
+    (merged.stagnationMaxPeakPct < 0 || merged.stagnationMaxPeakPct > 1)
+  ) {
+    return NextResponse.json({ error: "stagnationMaxPeakPct out of range" }, { status: 400 });
+  }
 
   const { correlationId } = await queueWebCommand(
     WebWriteOp.AUTO_SESSION_START,
