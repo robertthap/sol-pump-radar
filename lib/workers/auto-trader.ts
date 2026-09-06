@@ -53,6 +53,8 @@ import { fetchDexMarketBatchCached } from "@/lib/dex/snapshot-cache";
 import { flowThresholdsFor, passesFlowGate, relaxMomentumThresholds } from "@/lib/trade/entry-flow";
 import { meetsSmartMoneyRequirement, smartMoneySignal } from "@/lib/trade/smart-money";
 import { fetchSmartMoneyBuyers } from "@/lib/db/repos/smart-money-buyers";
+import { planProfitTarget } from "@/lib/trade/profit-target";
+import { getSolUsdSync } from "@/lib/market/sol-usd";
 import { latestVSolBatch } from "@/lib/db/repos/events";
 import { VSOL_MODULE_KEY } from "@/lib/intelligence/scored-mint-adapter";
 import { paperOpen, paperClose, paperPartialClose, getPaperConfig } from "@/lib/paper/engine";
@@ -432,7 +434,27 @@ async function sweepOrphanedOpenPositions(): Promise<void> {
 }
 
 async function handleExits(session: AutoSessionDto) {
-  const tpPct = session.params.takeProfitPct;
+  // Fixed-cash take-profit. "$2 per trade" is a cash target, and the exit engine
+  // speaks percentages, so convert -- against the executor's real friction, or
+  // the target books short every time (break-even alone is +2.02% of value).
+  //
+  // Recomputed each pass rather than pinned at session start: the required
+  // percentage moves with the SOL price, and a session can run for hours.
+  // An implausible target (e.g. $2 on a 0.01 SOL stake, which needs a 2x) is
+  // REFUSED and falls back to takeProfitPct -- silently accepting it would
+  // produce a bot that holds everything to timeout waiting for a move that
+  // never comes, which is indistinguishable from the bot being broken.
+  let tpPct = session.params.takeProfitPct;
+  const targetUsd = session.params.profitTargetUsd;
+  if (targetUsd != null && targetUsd > 0) {
+    const plan = planProfitTarget({
+      notionalSol: session.params.sizeSol,
+      targetUsd,
+      solUsd: getSolUsdSync(),
+    });
+    if (plan && !plan.implausible) tpPct = plan.netPct;
+    else if (plan) log.warn("profit target refused, using takeProfitPct", { reason: plan.reason });
+  }
   const slPct = session.params.stopLossPct;
   const maxHoldMs = session.params.maxHoldMinutes * 60_000;
   // Multi-tier ladder (Kalacheva et al. 2026 §6.3). When tp1Pct is unset or
@@ -1284,6 +1306,25 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       bumpTransient(d.mint, "no live price yet");
       const ageMs = Date.now() - new Date(d.ts).getTime();
       if (ageMs > 120_000) skipNoPrice.push(d.id);
+      continue;
+    }
+
+    // Curve-position band. Derived from the operator's watchlist rather than
+    // invented: those wallets buy in a tight vSol 46-69 window (median 54.5,
+    // n=243), while this bot's own entries sit at a median of 150 with 86%
+    // above 70 -- i.e. at or past graduation. Sorting our own 1,082 closed
+    // trades by entry vSol, the band we almost never trade is the one that
+    // reaches +13.3% twice as often (15.8% / 12.5% below 70, vs 7.7% above).
+    //
+    // SMALL SAMPLES below 70 (19 and 48 trades) -- this is a hypothesis drawn
+    // from where better wallets operate, not a validated edge. It is a pure
+    // selection change, exits untouched, so its effect is attributable.
+    const bandLo = session.params.minEntryVSol;
+    const bandHi = session.params.maxEntryVSol;
+    if ((bandLo != null && v < bandLo) || (bandHi != null && v > bandHi)) {
+      const reason = `outside curve band: vSol ${v.toFixed(1)} not in [${bandLo ?? "-"}, ${bandHi ?? "-"}]`;
+      log.info("auto skipped (curve band)", { mint: d.mint, reason });
+      bumpTransient(d.mint, reason);
       continue;
     }
 

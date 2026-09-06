@@ -99,6 +99,49 @@ const PRESETS: Record<string, Partial<AutoSessionParams>> = {
     smartMoneyBoost: true,
     useLearnedAvoids: false,
   },
+  // "Put in 0.1 SOL, take $2 out, do it often." Three changes from balanced,
+  // each traceable to a measurement rather than a preference:
+  //
+  // 1. CURVE BAND (the entry change, and the only one with an edge argument).
+  //    The operator's watchlist buys in a tight vSol 46-69 window, median 54.5
+  //    over 243 buys. This bot enters at a median of 150, with 86% of its 1,082
+  //    trades above vSol 70 -- at or past graduation. Sorting our own closed
+  //    trades by entry band, +13.3% is reached 15.8% of the time below vSol 45
+  //    and 12.5% between 45 and 70, against 7.7% above 70. Widened to 20-70 to
+  //    cover both good buckets. SMALL SAMPLES below 70 (19 and 48 trades): this
+  //    is a hypothesis about where to fish, not a proven edge.
+  //
+  // 2. CASH TARGET. profitTargetUsd replaces takeProfitPct, converted per exit
+  //    pass against real friction: $2 on 0.1 SOL at SOL=$150 is +13.3% net,
+  //    which is a +7.5% move in vSol. Break-even alone is +2.02%.
+  //
+  // 3. NO TRAILING STOP, deliberately. A trail arms below the target and would
+  //    exit at +6-8%, which is not the "$2, no more no less" that was asked for.
+  //    Exits are TP, SL, the 3-minute flat cut, or the 10-minute timeout.
+  //
+  // THE ARITHMETIC TO WATCH, stated plainly because it decides whether this
+  // works: with TP +13.3% and SL -6%, break-even needs a 31% win rate. Our
+  // measured rate in this band is 12.5-15.8% -- though that is EXIT-based, and
+  // a target this tight banks moves the current policy rides back down, so the
+  // real rate should be higher. How much higher is exactly what position_marks
+  // is now recording. Until that says otherwise this preset is UNPROVEN, and
+  // "more trades per minute" multiplies whatever the expectancy turns out to
+  // be -- including a negative one.
+  compounder: {
+    sizeSol: 0.1,
+    maxConcurrent: 10,
+    signalStrictness: "strong_and_moderate",
+    minEntryVSol: 20,
+    maxEntryVSol: 70,
+    profitTargetUsd: 2,
+    // Fallback only, used if the cash target is ever refused as implausible.
+    takeProfitPct: 0.133,
+    stopLossPct: 0.06,
+    maxHoldMinutes: 10,
+    stagnationMinutes: 3,
+    stagnationMaxPeakPct: 0.02,
+    useLearnedAvoids: false,
+  },
   balanced: {
     sizeSol: 0.03,
     maxConcurrent: 5,

@@ -18,7 +18,7 @@ import { plainSol } from "@/components/ticker/format";
  * are requests, not authority. Nothing here bypasses the breaker, the daily
  * cap, the live gate, the vault, or the worker.
  */
-type Preset = "balanced" | "conservative" | "aggressive" | "scalp" | "momentum" | "smartMoney";
+type Preset = "balanced" | "conservative" | "aggressive" | "scalp" | "momentum" | "smartMoney" | "compounder";
 
 const RANGES = {
   sizeSol: { min: 0.001, max: 5, hint: "0.001 - 5 SOL" },
@@ -228,6 +228,7 @@ export function BotControls() {
               onChange={(e) => setPreset(e.target.value as Preset)}
               className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
+              <option value="compounder">Compounder ($2 a trade, fast)</option>
               <option value="balanced">Balanced</option>
               <option value="conservative">Conservative</option>
               <option value="aggressive">Aggressive</option>
@@ -236,7 +237,9 @@ export function BotControls() {
               <option value="smartMoney">Smart Money (only when watched wallets buy)</option>
             </select>
             <p className="mt-1 text-xs text-muted">
-              {preset === "scalp"
+              {preset === "compounder"
+                ? "Targets a fixed $2 per trade on a 0.1 SOL stake (+13.3% net after all fees — break-even alone is +2%), stop at −6%, cuts anything flat at 3 min, 10 min max hold, 10 slots. Only buys in the vSol 20–70 curve band, where better wallets actually operate and where our own trades hit +13.3% about twice as often. Needs a 31% win rate to break even; measured so far is 12–16%. UNPROVEN — trading faster multiplies whatever the expectancy is, including a negative one."
+                : preset === "scalp"
                 ? "Small profits, fast slots: banks half at +5%, trails from +6%, cuts anything still flat at 5 min, max 12 min hold. Unproven — being measured."
                 : preset === "momentum"
                   ? "Only enters coins whose trading is accelerating with buyers on top (≥8 buys/5m, buys ≥ sells, volume running ≥1.5× its hourly pace). Exits match Balanced, so selection is the only difference. Expect far fewer trades. Unproven — being measured."

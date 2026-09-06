@@ -64,6 +64,21 @@ export type AutoSessionParams = {
    */
   requireSmartMoney?: "off" | "weak" | "strong";
   /**
+   * Curve-position entry band, in vSol. Derived from where better wallets
+   * actually operate: the operator's watchlist buys in a tight 46-69 window
+   * (median 54.5) while this bot's own entries median 150, i.e. mostly at or
+   * past graduation. Undefined leaves entry unrestricted.
+   */
+  minEntryVSol?: number;
+  maxEntryVSol?: number;
+  /**
+   * Fixed CASH take-profit, in USD, replacing takeProfitPct when set. Converted
+   * per exit pass against the executor's real friction and the live SOL price;
+   * a target needing more than +100% net is refused and takeProfitPct is used
+   * instead. See lib/trade/profit-target.ts.
+   */
+  profitTargetUsd?: number;
+  /**
    * Relax this session's own opt-in momentum thresholds by half when the
    * smart-money signal is strong. Never relaxes the baseline dead/dumping veto
    * — see relaxMomentumThresholds.
