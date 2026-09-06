@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { useTradingMode } from "@/components/TradingModeProvider";
 import { SessionWalletBalance } from "@/components/SessionWalletBalance";
+import { WatchlistPanel } from "@/components/watchlist/WatchlistPanel";
 
 /**
  * /wallet - status, balance, mode, connection state, safe wallet controls.
@@ -47,6 +48,8 @@ export function WalletPage() {
           ))}
         </dl>
       </section>
+
+      <WatchlistPanel />
 
       <p className="text-sm text-muted">
         Positions, P&amp;L and the bot live on{" "}
