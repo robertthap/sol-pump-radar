@@ -9,6 +9,34 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const PRESETS: Record<string, Partial<AutoSessionParams>> = {
+  // Fast turnover: take a small profit and free the slot in minutes rather than
+  // holding for a big move. A HYPOTHESIS, not a validated setting -- every number
+  // below is reasoned from the ledger (81% of trades never beat +3% and won 0 of
+  // 61; the winners that exist mostly peak inside 15 min) and from the ~2%
+  // round-trip friction, but it has not been replayed against recorded marks yet.
+  // scripts/exit-policy-eval.ts is what will settle it.
+  scalp: {
+    sizeSol: 0.03,
+    maxConcurrent: 5,
+    signalStrictness: "strong_and_moderate",
+    // Arm the trail early and keep it tight: exits land around +2-5% net of the
+    // ~2% round trip instead of waiting for a move that usually never comes.
+    trailingArmPct: 0.06,
+    trailingStopPct: 0.04,
+    // Bank half at +5% -- the 3-10% bucket is where the hit rate actually is (7 of 8).
+    tp1Pct: 0.05,
+    tp1Fraction: 0.5,
+    // Unreachable while the trail arms first (documented); kept for live-path parity.
+    takeProfitPct: 0.10,
+    // Tighter than balanced: a scalp that is 8% down is not recovering in 12 min.
+    stopLossPct: 0.08,
+    maxHoldMinutes: 12,
+    // The one cut the data supports without qualification: still under +3% at
+    // 5 min means it is one of the 61 that never moved.
+    stagnationMinutes: 5,
+    stagnationMaxPeakPct: 0.03,
+    useLearnedAvoids: false,
+  },
   balanced: {
     sizeSol: 0.03,
     maxConcurrent: 5,

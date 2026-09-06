@@ -18,7 +18,7 @@ import { plainSol } from "@/components/ticker/format";
  * are requests, not authority. Nothing here bypasses the breaker, the daily
  * cap, the live gate, the vault, or the worker.
  */
-type Preset = "balanced" | "conservative" | "aggressive";
+type Preset = "balanced" | "conservative" | "aggressive" | "scalp";
 
 const RANGES = {
   sizeSol: { min: 0.001, max: 5, hint: "0.001 - 5 SOL" },
@@ -231,8 +231,13 @@ export function BotControls() {
               <option value="balanced">Balanced</option>
               <option value="conservative">Conservative</option>
               <option value="aggressive">Aggressive</option>
+              <option value="scalp">Scalp (fast turnover)</option>
             </select>
-            <p className="mt-1 text-xs text-muted">Sets take-profit, stop-loss and hold time. Your limits above override its size and cap.</p>
+            <p className="mt-1 text-xs text-muted">
+              {preset === "scalp"
+                ? "Small profits, fast slots: banks half at +5%, trails from +6%, cuts anything still flat at 5 min, max 12 min hold. Unproven — being measured."
+                : "Sets take-profit, stop-loss and hold time. Your limits above override its size and cap."}
+            </p>
           </div>
           <button
             type="submit"
