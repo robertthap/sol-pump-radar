@@ -26,6 +26,9 @@ import {
   type AutoSessionDto,
 } from "@/lib/db/repos/auto-sessions";
 import { recordOutcome } from "@/lib/db/repos/outcomes";
+import { insertPositionMarks, type PositionMarkInsert } from "@/lib/db/repos/position-marks";
+import { ageSeconds, shouldMark } from "@/lib/paper/position-marks";
+import { fetchMintLaunchActivity } from "@/lib/db/repos/events";
 import { recordPostExitSnapshot } from "@/lib/db/repos/measurement";
 import { evaluateGenesisSnipe } from "@/lib/intelligence/genesis-snipe";
 import { fetchGenesisSnipeCandidates } from "@/lib/db/repos/genesis-signals";
@@ -337,7 +340,7 @@ async function todayLossSol(session: AutoSessionDto): Promise<number> {
  */
 async function resolveCurrentForExit(
   mint: string,
-): Promise<{ vSol: number | null; graduated: boolean; mcapUsd: number | null }> {
+): Promise<{ vSol: number | null; graduated: boolean; mcapUsd: number | null; lastTradeAt: string | null }> {
   const events = await latestVSolFor(mint);
   let coin: Awaited<ReturnType<typeof fetchPumpFunCoin>> = null;
   try {
@@ -350,11 +353,15 @@ async function resolveCurrentForExit(
       ? coin.usdMarketCap
       : null;
   const graduated = (coin?.bondingPct ?? 0) >= 100 || coin?.complete === true;
+  // Carried for position marks: for a graduated coin this is the only "is anyone
+  // still trading it" signal we have, since its trades are on PumpSwap and never
+  // reach `events`. Free — the pump.fun fetch above is already cached 8s.
+  const lastTradeAt = coin?.lastTradeAt ?? null;
   if (graduated) {
     const eff = effectiveVSolFromMcapUsd(mcapUsd);
-    if (eff != null) return { vSol: eff, graduated: true, mcapUsd };
+    if (eff != null) return { vSol: eff, graduated: true, mcapUsd, lastTradeAt };
   }
-  return { vSol: events, graduated, mcapUsd };
+  return { vSol: events, graduated, mcapUsd, lastTradeAt };
 }
 
 /**
@@ -455,12 +462,29 @@ async function handleExits(session: AutoSessionDto) {
       tp1_fraction: number;
     };
     const rows = (res as unknown as { rows: Raw[] }).rows;
+
+    // Research instrumentation (not a trading input): sample each open position's
+    // P&L/health path ~every 30s so exit policies can be evaluated offline. The
+    // curve-flow figures come from ONE batched query per tick; graduated coins
+    // trade on PumpSwap and are absent from `events`, so theirs stay null and
+    // `lastTradeAgeS` (pump.fun) is the liveness signal instead.
+    const marks: PositionMarkInsert[] = [];
+    const curveFlow = await fetchMintLaunchActivity(
+      rows.map((r) => r.mint),
+      60,
+    ).catch(() => new Map<string, { tradeCount: number; uniqueWallets: number; maxVSol: number }>());
+
     for (const pos of rows) {
       if (pos.entry_v_sol == null) continue;
       // Attribute closed-trade stats to the position's OWNING session (it may
       // have been opened by a now-stopped session but still occupies the ledger).
       const statSession = pos.pos_session_id ?? session.id;
-      const { vSol: current, graduated, mcapUsd: currentMcapUsd } = await resolveCurrentForExit(pos.mint);
+      const {
+        vSol: current,
+        graduated,
+        mcapUsd: currentMcapUsd,
+        lastTradeAt,
+      } = await resolveCurrentForExit(pos.mint);
       if (current == null) {
         // Dead/illiquid mint: no live price feed. Don't let it hold a
         // concurrency slot forever — once past max hold, force-close at the
@@ -517,7 +541,8 @@ async function handleExits(session: AutoSessionDto) {
       }
       const openedAt =
         pos.opened_at instanceof Date ? pos.opened_at.getTime() : new Date(pos.opened_at).getTime();
-      const ageMs = Date.now() - openedAt;
+      const now = Date.now();
+      const ageMs = now - openedAt;
 
       // Prefer REAL market-cap PnL (pump/DEX) when we have a real entry mcap and a
       // live current mcap — accurate on AND off the bonding curve. Otherwise fall
@@ -584,6 +609,32 @@ async function handleExits(session: AutoSessionDto) {
       const tp1Realized = pos.tp1_realized_sol ?? 0;
       const tp1FractionExisting = pos.tp1_fraction ?? 0;
       const id = BigInt(pos.id);
+
+      // Sample the path ~every 30s (see lib/paper/position-marks.ts). Recording
+      // only; nothing here influences the exit decision below.
+      const lastMarkAt = typeof ef.last_mark_at_ms === "number" ? (ef.last_mark_at_ms as number) : null;
+      if (shouldMark(lastMarkAt, now)) {
+        const flow = graduated ? null : (curveFlow.get(pos.mint) ?? null);
+        marks.push({
+          positionId: id,
+          ageS: Math.round(ageMs / 1000),
+          pct: pctOfSize,
+          peakPct,
+          mcapUsd: currentMcapUsd,
+          graduated,
+          lastTradeAgeS: ageSeconds(lastTradeAt, now),
+          curveTrades60s: flow?.tradeCount ?? null,
+          curveWallets60s: flow?.uniqueWallets ?? null,
+        });
+        await getDb()
+          .execute(sql`
+            UPDATE paper_positions
+            SET entry_features = COALESCE(entry_features, '{}'::jsonb)
+              || jsonb_build_object('last_mark_at_ms', ${now}::float8)
+            WHERE id = ${id}
+          `)
+          .catch(() => undefined);
+      }
 
       // T3.3 — genesis trades use a moon-tail-preserving exit: wide rug-cut SL
       // only, no TP / no trail / no stagnation / no TP1 ladder. The exit backtest
@@ -718,6 +769,13 @@ async function handleExits(session: AutoSessionDto) {
         pnlSol: finalPnl,
         extra: { sessionId: session.id },
       });
+    }
+    // One batched insert per tick. Best-effort: instrumentation must never
+    // interfere with exits.
+    if (marks.length) {
+      await insertPositionMarks(marks).catch((e) =>
+        log.warn("position marks insert failed", { err: String(e), n: marks.length }),
+      );
     }
     return;
   }

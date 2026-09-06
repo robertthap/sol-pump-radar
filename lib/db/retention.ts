@@ -68,6 +68,9 @@ export async function runRetentionPrune(): Promise<{
 
   const tokenFeaturesN = await chunkPrune("token_features", "ts", "2 days");
   const ingestFactsN = await chunkPrune("ingest_facts", "created_at", `${days} days`);
+  // Exit-policy research data (~1 row per open position per 30s). 14 days is far
+  // more than any replay window needs and keeps the table trivially small.
+  const positionMarksN = await chunkPrune("position_marks", "ts", "14 days");
 
   const counts = {
     events: rowCount(events),
@@ -76,6 +79,7 @@ export async function runRetentionPrune(): Promise<{
     engineBTraces: engineBTracesN,
     tokenFeatures: tokenFeaturesN,
     ingestFacts: ingestFactsN,
+    positionMarks: positionMarksN,
   };
 
   if (Object.values(counts).some((n) => n > 0)) {

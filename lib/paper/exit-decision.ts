@@ -9,7 +9,7 @@
  * real mover — we DROP the fixed TP and let the trailing stop ride the move, so a
  * strong runner is captured near its peak instead of being capped at `tpPct`.
  */
-export type ExitReason = "tp" | "trail" | "sl" | "timeout" | null;
+export type ExitReason = "tp" | "trail" | "sl" | "stagnation" | "timeout" | null;
 
 export type ExitDecisionParams = {
   tpPct: number;
@@ -43,7 +43,10 @@ export function decidePaperExit(
     // Small winner that never armed the trail: take the fixed profit.
     if (pctOfSize >= p.tpPct) return "tp";
     // Stagnation cut: built no momentum → free the slot well before max-hold.
-    if (p.stagnationMs && p.stagnationMs > 0 && ageMs >= p.stagnationMs) return "timeout";
+    // Distinct from "timeout" so the ledger can tell a flat-position cut from a
+    // genuine max-hold expiry — they had the same reason string before, which
+    // made the cut invisible in every report.
+    if (p.stagnationMs && p.stagnationMs > 0 && ageMs >= p.stagnationMs) return "stagnation";
   }
 
   if (ageMs >= p.maxHoldMs) return "timeout";

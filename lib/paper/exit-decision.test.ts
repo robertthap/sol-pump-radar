@@ -37,8 +37,10 @@ describe("decidePaperExit", () => {
 
   it("stagnation cut: never armed the trail → cut early to free capital", () => {
     const withStag = { ...P, stagnationMs: 10 * 60_000 };
-    // peak only +5% (< arm 0.15) at 11min → stagnation timeout.
-    assert.equal(decidePaperExit(0.03, 0.05, 11 * 60_000, withStag), "timeout");
+    // peak only +5% (< arm 0.15) at 11min → stagnation cut. Its own reason, NOT
+    // "timeout": a flat-position cut and a max-hold expiry are different events
+    // and were indistinguishable in the ledger while they shared a string.
+    assert.equal(decidePaperExit(0.03, 0.05, 11 * 60_000, withStag), "stagnation");
     // a mover that armed the trail is NOT stagnation-cut.
     assert.equal(decidePaperExit(0.18, 0.2, 11 * 60_000, withStag), null);
   });
