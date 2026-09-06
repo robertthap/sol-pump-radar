@@ -49,11 +49,15 @@ export type PositionMarkRow = {
 export async function fetchMarksForPositions(positionIds: string[]): Promise<Map<string, PositionMarkRow[]>> {
   const out = new Map<string, PositionMarkRow[]>();
   if (positionIds.length === 0) return out;
+  // Numeric-only whitelist, then a raw IN list: drizzle cannot bind a JS array
+  // as bigint[], and these ids come from our own ledger.
+  const safe = positionIds.filter((id) => /^\d+$/.test(id));
+  if (safe.length === 0) return out;
   const res = await getDb().execute(sql`
     SELECT position_id::text AS position_id, age_s, pct, peak_pct, mcap_usd,
            graduated, last_trade_age_s, curve_trades_60s, curve_wallets_60s
     FROM position_marks
-    WHERE position_id = ANY(${positionIds.map((id) => BigInt(id))}::bigint[])
+    WHERE position_id IN (${sql.raw(safe.join(","))})
     ORDER BY position_id, age_s ASC
   `);
   for (const r of (res as unknown as { rows: Array<Record<string, unknown>> }).rows) {

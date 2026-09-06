@@ -35,6 +35,7 @@
     "verify:launch": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/verify-launch-entry.ts",
     "session:report": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/session-profit-report.ts",
     "eval-paper": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/eval-paper.ts",
+    "exit-eval": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/exit-policy-eval.ts",
     "e2e": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/e2e-user-journey.ts"
   },
   "dependencies": {
