@@ -79,9 +79,10 @@ import { attributePnl, attributionFields } from "@/lib/intelligence/pnl-attribut
 import { touchWorker } from "@/lib/workers/heartbeat";
 import { recordRadarEvent } from "@/lib/radar/recorder";
 import type { RadarEventStage } from "@/lib/radar/snapshot";
+import { tickResearchTrader } from "@/lib/workers/research-trader";
 
 const log = logger("auto-trader");
-const TICK_MS = 3_000;
+const TICK_MS = 1_000;
 let lastPendingFallbackAt = 0;
 // Throttle the orphaned-cap warning so it doesn't flood every tick while leftover
 // positions from a pre-restart session drain (they self-clear at stagnation/max-hold).
@@ -201,6 +202,7 @@ export async function startAutoTrader() {
   log.info("auto-trader starting", { tickMs: TICK_MS });
 
   let running = false;
+  let lastStandardTick = 0;
   // Kill-switch cooldown: pauses NEW entries after a consecutive-loss streak;
   // exits keep running and the pause auto-expires (recoverable, unlike the
   // terminal daily-loss stop).
@@ -236,6 +238,17 @@ export async function startAutoTrader() {
     touchWorker("auto-trader");
     try {
       const session = await getActiveSession();
+      const researchActive = session?.mode === "paper" && !!session.params.researchStrategy;
+      const researchHalted = (await readState()).state === "HALTED";
+      // Research exits remain managed after Stop; no generic force-close may invent their P&L.
+      await tickResearchTrader(session, researchActive && !researchHalted);
+      if (researchActive) {
+        if (researchHalted) await stopSession("system halted");
+        else if (await todayLossSol(session) >= session.params.maxDailyLossSol) await stopSession("daily loss cap");
+        return;
+      }
+      if (Date.now() - lastStandardTick < 3_000) return;
+      lastStandardTick = Date.now();
       if (!session) {
         // No active session means nobody is managing exits. A session that
         // stopped (loss-cap / manual / worker-restart) leaves its open positions
@@ -437,6 +450,7 @@ async function sweepOrphanedOpenPositions(): Promise<void> {
       COALESCE(tp1_realized_sol, 0)::float8 AS tp1_realized_sol
     FROM paper_positions
     WHERE state = 'OPEN'
+      AND entry_features->>'research_strategy' IS NULL
   `);
   const rows = (res as unknown as {
     rows: Array<{
@@ -554,6 +568,7 @@ async function handleExits(session: AutoSessionDto) {
         COALESCE(tp1_fraction, 0)::float8 AS tp1_fraction
       FROM paper_positions
       WHERE state = 'OPEN'
+        AND entry_features->>'research_strategy' IS NULL
     `);
     type Raw = {
       id: string; mint: string; size_sol: number;

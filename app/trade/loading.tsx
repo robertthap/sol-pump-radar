@@ -1,7 +1,7 @@
 /** Instant shell while /trade compiles or navigates (dev compile can take 10-30s). */
 export default function TradeLoading() {
   return (
-    <main className="app-page">
+    <div className="app-page">
       <h1 className="mb-3 text-lg font-semibold">Trade</h1>
       <div className="mb-3 h-9 animate-pulse rounded-lg bg-panel2" />
       <section className="mb-4 card overflow-hidden">
@@ -14,6 +14,6 @@ export default function TradeLoading() {
       <div className="card overflow-hidden">
         <div className="h-48 animate-pulse bg-bg" />
       </div>
-    </main>
+    </div>
   );
 }

@@ -16,6 +16,7 @@ import {
 } from "@/lib/db/repos/auto-sessions";
 import { fetchModeLiteSnapshot } from "@/lib/settings/mode-lite-snapshot";
 import { refreshSignalModeOverride, signalModeStatus } from "@/lib/settings/signal-mode";
+import { researchBotStatus } from "@/lib/db/repos/research-bot";
 import {
   composePortfolio,
   filterImportantLogs,
@@ -23,6 +24,7 @@ import {
   type TickerClosedPosition,
   type TickerPosition,
   type TickerResponse,
+  type TickerScout,
   type TickerSourceStatus,
 } from "@/lib/auto/ticker-snapshot";
 
@@ -78,7 +80,8 @@ async function buildTicker(): Promise<TickerResponse> {
   const uiMode = modeLite.mode;
 
   const [snap, logsRaw, todayLoss, pendingBuys] = await Promise.all([
-    // 60 = the snapshot's cap; closed rows for the Closed tab ride along in the same query.
+    // The realtime snapshot prioritizes every open position, then includes a
+    // small closed preview. The Closed tab loads immutable history separately.
     fetchAutoSessionPositionsSnapshot(60),
     session ? fetchSessionActivityLog(session.id, { limit: 60 }) : Promise.resolve([]),
     session ? fetchTodayLoss(session.id).catch(() => 0) : Promise.resolve(0),
@@ -86,10 +89,11 @@ async function buildTicker(): Promise<TickerResponse> {
     active ? countPendingBuyDecisions(90, { relaxAutoGate: autoDemoRelaxEnabled() }).catch(() => 0) : Promise.resolve(0),
   ]);
 
-  const positions: TickerPosition[] = snap.open.map((p) => ({
+  const allPositions: TickerPosition[] = snap.open.map((p) => ({
     id: p.id,
     mint: p.mint,
     symbol: p.symbol,
+    name: p.name,
     source: p.source,
     sizeSol: p.sizeSol,
     pnlSol: p.pnlSol,
@@ -99,18 +103,30 @@ async function buildTicker(): Promise<TickerResponse> {
     entryVSol: p.entryVSol,
     currentVSol: p.currentVSol,
     openedAt: p.openedAt,
+    strategyName: p.strategyName,
+    strategyReason: p.strategyReason,
+    researchStatus: p.researchStatus,
+    added: p.added,
   }));
+  // A censored research observation has no strategy-valid exit mark and is no
+  // longer managed as a live holding. Keep it visible under Scouting, never in
+  // Open and never in unrealized P&L.
+  const positions = allPositions.filter((p) => p.researchStatus !== "CENSORED");
 
   const closedPositions: TickerClosedPosition[] = snap.closed.map((p) => ({
     id: p.id,
     mint: p.mint,
     symbol: p.symbol,
+    name: p.name,
     source: p.source,
     sizeSol: p.sizeSol,
+    entryMcapUsd: p.entryMcapUsd,
+    exitMcapUsd: p.currentMcapUsd,
     pnlSol: p.pnlSol,
     exitReason: p.exitReason,
     openedAt: p.openedAt,
     closedAt: p.closedAt,
+    strategyName: p.strategyName,
   }));
 
   // availableSol is cash, not P&L, so reading it from the demo account cannot
@@ -125,6 +141,42 @@ async function buildTicker(): Promise<TickerResponse> {
   // this the web tier would serve the 150/230 fallbacks forever.
   void getSolUsd().catch(() => undefined);
   const params = session?.params ?? DEFAULT_PARAMS;
+  const research = session && params.researchStrategy ? await researchBotStatus(session.id) : null;
+  const scoutingById = new Map<string, TickerScout>();
+  for (const p of allPositions) {
+    if (p.researchStatus !== "CENSORED") continue;
+    scoutingById.set(`position:${p.id}`, {
+      id: `position:${p.id}`,
+      mint: p.mint,
+      symbol: p.symbol,
+      name: p.name,
+      strategy: p.strategyName ?? "Research strategy",
+      status: "CENSORED",
+      reason: p.strategyReason ?? "Strategy-valid exit data was unavailable",
+      ts: p.openedAt,
+    });
+  }
+  for (const item of research?.recent ?? []) {
+    if (item.status === "OPEN" || item.status === "CLOSED") continue;
+    const key = `scout:${item.mint}`;
+    if (scoutingById.has(key)) continue;
+    if (
+      item.status === "CENSORED" &&
+      [...scoutingById.values()].some((s) => s.mint === item.mint && s.status === "CENSORED")
+    )
+      continue;
+    scoutingById.set(key, {
+      id: key,
+      mint: item.mint,
+      symbol: item.symbol,
+      name: item.name,
+      strategy: item.strategy,
+      status: item.status,
+      reason: item.reason,
+      ts: item.ts,
+    });
+  }
+  const scouting = [...scoutingById.values()].sort((a, b) => (a.ts < b.ts ? 1 : -1));
   const sol = solPriceCacheSnapshot();
 
   return {
@@ -159,7 +211,12 @@ async function buildTicker(): Promise<TickerResponse> {
     portfolio,
     positions,
     closedPositions,
+    closedPositionCount: snap.stats.closedCount,
     bot: {
+      presetName: params.presetName,
+      researchStrategy: params.researchStrategy ?? null,
+      researchStatus: session?.stats.lastSkipReasons?.[0] ?? null,
+      research,
       running: !!active,
       slotsFull: !!active && positions.length >= Math.min(params.maxConcurrent, e.PAPER_MAX_OPEN_POSITIONS),
       pendingBuySignals: pendingBuys,
@@ -187,6 +244,7 @@ async function buildTicker(): Promise<TickerResponse> {
         maxConcurrent: Math.min(DEFAULT_PARAMS.maxConcurrent, e.PAPER_MAX_OPEN_POSITIONS),
       },
     },
+    scouting,
     logs: filterImportantLogs(logsRaw, 20),
   };
 }

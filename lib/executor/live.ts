@@ -1,11 +1,11 @@
 import "server-only";
 import bs58 from "bs58";
 import { Keypair, VersionedTransaction } from "@solana/web3.js";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/log";
 import { getDb } from "@/lib/db/client";
-import { tokens } from "@/lib/db/schema";
+import { fetchLivePrice } from "@/lib/pricing/live-price";
 import {
   closeLivePosition,
   fetchDailyLiveSol,
@@ -110,15 +110,54 @@ async function rpcSendBase64(rpcUrl: string, base64: string): Promise<string> {
   return j.result;
 }
 
-async function isGraduated(mint: string): Promise<boolean> {
-  const rows = await getDb()
-    .select({ graduatedAt: tokens.graduatedAt, status: tokens.status })
-    .from(tokens)
-    .where(eq(tokens.mint, mint))
-    .limit(1);
-  const t = rows[0];
-  if (!t) return false;
-  return t.graduatedAt != null || t.status === "graduated" || t.status === "completed";
+type TradeRouting =
+  | { route: "jupiter"; estimateVSol: number }
+  | { route: "pumpportal"; pool: "pump" | "auto"; estimateVSol: number | null }
+  | { route: "blocked"; reason: string };
+
+/**
+ * Route by the coin's on-chain phase (lib/pricing/live-price.ts), not the `tokens`
+ * table — which flagged 0 of the 86 coins traded as graduated while 99.8% of their
+ * position marks were graduated, so every live order would have been sent to the
+ * bonding curve. Graduated → Jupiter. On the curve → PumpPortal pool "pump".
+ * Unknown: a buy is refused (there is no price to record it against); a sell still
+ * goes out through PumpPortal pool "auto", which picks the venue, so an exit is
+ * never blocked by a failed price read.
+ */
+async function routeFor(mint: string, side: "buy" | "sell"): Promise<TradeRouting> {
+  const live = await fetchLivePrice(mint);
+  if (live.phase === "graduated") return { route: "jupiter", estimateVSol: live.vSol };
+  if (live.phase === "curve") return { route: "pumpportal", pool: "pump", estimateVSol: live.vSol };
+  if (side === "sell") return { route: "pumpportal", pool: "auto", estimateVSol: null };
+  return { route: "blocked", reason: `no on-chain price: ${live.reason}` };
+}
+
+type PendingSellMarker = {
+  sig: string;
+  percent: number;
+  final: boolean;
+  reason: string;
+  source: "auto" | "manual";
+};
+
+/**
+ * Record a sent (unconfirmed) sell on its position. lib/workers/live-settlement.ts
+ * books it from the confirmed transaction, or undoes the marker if it never lands.
+ */
+async function markPendingSell(id: bigint, p: PendingSellMarker): Promise<void> {
+  await getDb().execute(sql`
+    UPDATE live_trades
+    SET status = CASE WHEN ${p.final}::boolean THEN 'pending_close' ELSE status END,
+        entry_features = COALESCE(entry_features, '{}'::jsonb) || jsonb_build_object(
+          'pending_sell', jsonb_build_object(
+            'sig', ${p.sig}::text,
+            'percent', ${p.percent}::float8,
+            'final', ${p.final}::boolean,
+            'reason', ${p.reason}::text,
+            'source', ${p.source}::text,
+            'sent_at_ms', ${Date.now()}::float8))
+    WHERE id = ${id}
+  `);
 }
 
 function firstSignatureFromBytes(rawTxBytes: Uint8Array): string {
@@ -142,6 +181,8 @@ async function pumpPortalSign(
     denominatedInSol: "true" | "false";
     slippageBps: number;
     priorityFeeSol: number;
+    /** "pump" = bonding curve; "auto" = PumpPortal picks the venue (documented option). */
+    pool: "pump" | "auto";
   },
 ): Promise<{ txBytes: Uint8Array }> {
   const body = {
@@ -152,7 +193,7 @@ async function pumpPortalSign(
     denominatedInSol: opts.denominatedInSol,
     slippage: opts.slippageBps / 100,
     priorityFee: opts.priorityFeeSol,
-    pool: "pump",
+    pool: opts.pool,
   };
   const r = await fetch(env().PUMPPORTAL_TRADE_URL, {
     method: "POST",
@@ -240,17 +281,15 @@ export type ExecuteBuyOpts = {
   decisionId?: bigint | null;
 };
 
-async function resolveEntryVSol(mint: string, hint?: number | null): Promise<number | null> {
-  if (hint != null && Number.isFinite(hint) && hint > 0) return hint;
-  const res = await getDb().execute(sql`
-    SELECT v_sol_after::float8 AS v
-    FROM events
-    WHERE mint = ${mint} AND v_sol_after IS NOT NULL
-    ORDER BY ts DESC
-    LIMIT 1
-  `);
-  const v = (res as unknown as { rows: Array<{ v: number | null }> }).rows[0]?.v;
-  return v != null && v > 0 ? v : null;
+/**
+ * Pre-fill entry estimate on the same on-chain basis live exits are priced on (the
+ * old version read the ingested curve price, frozen for graduated coins). Replaced
+ * by the real fill price once lib/workers/live-settlement.ts confirms the buy.
+ */
+async function estimateEntryVSol(mint: string, hint?: number | null): Promise<number | null> {
+  const live = await fetchLivePrice(mint);
+  if (live.phase !== "unknown") return live.vSol;
+  return hint != null && Number.isFinite(hint) && hint > 0 ? hint : null;
 }
 
 function withEntryFeatures(
@@ -284,13 +323,14 @@ export async function buildUnsignedLiveBuyTx(opts: {
     return { ok: false, reason: "live_dry_run — refusing to build a signable transaction" };
   }
   const lamports = BigInt(Math.round(opts.sizeSol * 1_000_000_000));
-  const graduated = await isGraduated(opts.mint);
-  const route: LiveTradeRoute = graduated ? "jupiter" : "pumpportal";
+  const routing = await routeFor(opts.mint, "buy");
+  if (routing.route === "blocked") return { ok: false, reason: routing.reason };
+  const route: LiveTradeRoute = routing.route;
   const slippageBps = e.LIVE_SLIPPAGE_BPS;
   const priorityFeeLamports = Math.round(e.LIVE_PRIORITY_FEE_SOL * 1_000_000_000);
 
   try {
-    if (route === "jupiter") {
+    if (routing.route === "jupiter") {
       const r = await jupiterSwap({
         publicKey: opts.publicKey,
         inputMint: WSOL_MINT,
@@ -309,6 +349,7 @@ export async function buildUnsignedLiveBuyTx(opts: {
       denominatedInSol: "true",
       slippageBps,
       priorityFeeSol: e.LIVE_PRIORITY_FEE_SOL,
+      pool: routing.pool,
     });
     return { ok: true, txBase64: Buffer.from(r.txBytes).toString("base64"), route };
   } catch (err) {
@@ -333,13 +374,14 @@ export async function buildUnsignedLiveSellTx(opts: {
   if (rawAmount === 0n) return { ok: false, reason: "amount_rounded_to_zero" };
 
   const e = env();
-  const graduated = await isGraduated(opts.mint);
-  const route: LiveTradeRoute = graduated ? "jupiter" : "pumpportal";
+  const routing = await routeFor(opts.mint, "sell");
+  if (routing.route === "blocked") return { ok: false, reason: routing.reason };
+  const route: LiveTradeRoute = routing.route;
   const slippageBps = e.LIVE_SLIPPAGE_BPS;
   const priorityFeeLamports = Math.round(e.LIVE_PRIORITY_FEE_SOL * 1_000_000_000);
 
   try {
-    if (route === "jupiter") {
+    if (routing.route === "jupiter") {
       const r = await jupiterSwap({
         publicKey: opts.publicKey,
         inputMint: opts.mint,
@@ -359,6 +401,7 @@ export async function buildUnsignedLiveSellTx(opts: {
       denominatedInSol: "false",
       slippageBps,
       priorityFeeSol: e.LIVE_PRIORITY_FEE_SOL,
+      pool: routing.pool,
     });
     return { ok: true, txBase64: Buffer.from(r.txBytes).toString("base64"), route };
   } catch (err) {
@@ -379,23 +422,24 @@ export async function recordPhantomLiveBuy(opts: {
   const cap = await checkCaps(opts.sizeSol);
   if (!cap.ok) return { ok: false, error: cap.reason };
   const e = env();
-  const entryVSol = await resolveEntryVSol(opts.mint, opts.entryVSol);
+  const entryVSol = await estimateEntryVSol(opts.mint, opts.entryVSol);
+  // Pending until live-settlement confirms the signature and books the real fill.
   const id = await openLivePosition({
     mint: opts.mint,
     sizeSol: opts.sizeSol,
     entryPrice: entryVSol,
-    status: "open",
+    status: "pending",
     dryRun: false,
     route: opts.route,
     txSignatureOpen: opts.signature,
     modulesAtEntry: null,
     entryFeatures: withEntryFeatures(
-      { source: opts.source ?? "phantom-buy", wallet: opts.publicKey },
+      { source: opts.source ?? "phantom-buy", wallet: opts.publicKey, sent_at_ms: Date.now() },
       entryVSol,
     ),
     slippageBps: e.LIVE_SLIPPAGE_BPS,
   });
-  log.info("phantom buy recorded", {
+  log.info("phantom buy recorded (pending confirmation)", {
     mint: opts.mint,
     sig: opts.signature.slice(0, 12) + "…",
     sizeSol: opts.sizeSol,
@@ -413,15 +457,17 @@ export async function recordPhantomLiveSell(opts: {
   const percent = Math.max(1, Math.min(100, Math.round(opts.percent)));
   const open = await fetchOpenLiveByMint(opts.mint);
   const openId = open[0]?.id ?? null;
-  if (openId && percent === 100) {
-    await closeLivePosition({
-      id: openId,
-      status: "closed",
-      exitReason: "manual_phantom",
-      txSignatureClose: opts.signature,
+  if (openId) {
+    // Booked (with real proceeds and P&L) once live-settlement confirms it.
+    await markPendingSell(openId, {
+      sig: opts.signature,
+      percent,
+      final: percent === 100,
+      reason: "manual_phantom",
+      source: "manual",
     });
   }
-  log.info("phantom sell recorded", {
+  log.info("phantom sell recorded (pending confirmation)", {
     mint: opts.mint,
     sig: opts.signature.slice(0, 12) + "…",
     percent,
@@ -457,15 +503,39 @@ export async function executeLiveBuy(opts: ExecuteBuyOpts): Promise<LiveTradeRes
   }
 
   const lamports = BigInt(Math.round(opts.sizeSol * 1_000_000_000));
-  const graduated = await isGraduated(opts.mint);
-  const route: LiveTradeRoute = graduated ? "jupiter" : "pumpportal";
+  const routing = await routeFor(opts.mint, "buy");
+  if (routing.route === "blocked") {
+    const id = await openLivePosition({
+      mint: opts.mint,
+      sizeSol: opts.sizeSol,
+      status: "failed",
+      dryRun: e.LIVE_DRY_RUN === "on",
+      route: "blocked",
+      errorMessage: routing.reason,
+      modulesAtEntry: opts.modulesAtEntry ?? null,
+      entryFeatures: { ...(opts.entryFeatures ?? {}), guard: routing.reason },
+    });
+    log.warn("live buy blocked", { mint: opts.mint, reason: routing.reason });
+    return {
+      ok: false,
+      dryRun: e.LIVE_DRY_RUN === "on",
+      signature: null,
+      simulatedSignature: null,
+      route: "blocked",
+      tradeId: id,
+      error: routing.reason,
+      reason: routing.reason,
+    };
+  }
+  const route: LiveTradeRoute = routing.route;
   const slippageBps = e.LIVE_SLIPPAGE_BPS;
   const priorityFeeLamports = Math.round(e.LIVE_PRIORITY_FEE_SOL * 1_000_000_000);
-  const entryVSol = await resolveEntryVSol(opts.mint, opts.entryVSol);
+  // Estimate on the on-chain basis; the confirmed fill replaces it.
+  const entryVSol = routing.estimateVSol ?? (await estimateEntryVSol(opts.mint, opts.entryVSol));
 
   let txBytes: Uint8Array;
   try {
-    if (route === "jupiter") {
+    if (routing.route === "jupiter") {
       const r = await jupiterSwap({
         publicKey: opts.keypair.publicKey.toBase58(),
         inputMint: WSOL_MINT,
@@ -484,6 +554,7 @@ export async function executeLiveBuy(opts: ExecuteBuyOpts): Promise<LiveTradeRes
         denominatedInSol: "true",
         slippageBps,
         priorityFeeSol: e.LIVE_PRIORITY_FEE_SOL,
+        pool: routing.pool,
       });
       txBytes = r.txBytes;
     }
@@ -575,19 +646,26 @@ export async function executeLiveBuy(opts: ExecuteBuyOpts): Promise<LiveTradeRes
   // Real send path. Never reached during dry-run verification.
   try {
     const sig = await rpcSendBase64(opts.rpcUrl, signed.serialized);
+    // A signature is not a fill. The position stays `pending` (no exit logic, no
+    // P&L) until lib/workers/live-settlement.ts confirms it on-chain and books the
+    // real price and cost — or marks it failed if it never lands.
     const id = await openLivePosition({
       mint: opts.mint,
       sizeSol: opts.sizeSol,
       entryPrice: entryVSol,
-      status: "open",
+      status: "pending",
       dryRun: false,
       route,
       txSignatureOpen: sig,
       modulesAtEntry: opts.modulesAtEntry ?? null,
-      entryFeatures: withEntryFeatures(opts.entryFeatures, entryVSol),
+      entryFeatures: {
+        ...withEntryFeatures(opts.entryFeatures, entryVSol),
+        decision_v_sol: opts.entryVSol ?? null,
+        sent_at_ms: Date.now(),
+      },
       slippageBps,
     });
-    log.info("live buy SENT", {
+    log.info("live buy SENT (pending confirmation)", {
       mint: opts.mint,
       route,
       sig: sig.slice(0, 12) + "…",
@@ -626,12 +704,50 @@ export type ExecuteSellOpts = {
   percent: number; // 1-100
   keypair: Keypair;
   rpcUrl: string;
+  /** The live_trades row this sell belongs to (defaults to the open row for the mint). */
+  positionId?: bigint | null;
+  /** Exit reason booked when the sell settles (e.g. "sl", "tp1"). Default "manual". */
+  reason?: string;
+  /** "auto" = exit loop (a failed send/settlement reopens the position for retry). */
+  source?: "auto" | "manual";
 };
 
 export async function executeLiveSell(opts: ExecuteSellOpts): Promise<LiveTradeResult> {
   const e = env();
   const percent = Math.max(1, Math.min(100, Math.round(opts.percent)));
   const dryRun = e.LIVE_DRY_RUN === "on";
+  const source = opts.source ?? "manual";
+
+  // The position, and whether a sell for it is already awaiting confirmation (a
+  // second one would try to sell tokens the first may already have sold).
+  const positionRows =
+    opts.positionId != null
+      ? (
+          (await getDb().execute(sql`
+            SELECT id, entry_features FROM live_trades WHERE id = ${opts.positionId} AND closed_at IS NULL
+          `)) as unknown as { rows: Array<{ id: string | bigint; entry_features: Record<string, unknown> | null }> }
+        ).rows.map((r) => ({ id: BigInt(r.id), entryFeatures: r.entry_features }))
+      : (await fetchOpenLiveByMint(opts.mint)).map((r) => ({
+          id: r.id,
+          entryFeatures: r.entryFeatures as Record<string, unknown> | null,
+        }));
+  const openId = positionRows[0]?.id ?? null;
+  if (positionRows[0]?.entryFeatures?.pending_sell) {
+    return {
+      ok: false,
+      dryRun,
+      signature: null,
+      simulatedSignature: null,
+      route: "blocked",
+      tradeId: openId,
+      error: "sell_already_pending",
+    };
+  }
+  const recordSellFailure = async (msg: string) => {
+    // A manual sell that could not be sent needs the operator; an auto exit stays
+    // open so the exit loop tries again on its next tick.
+    if (openId && source === "manual") await markLivePositionCloseFailed(openId, msg);
+  };
 
   // Look up the user's balance. We size by raw token amount.
   const bal = await fetchTokenBalance(opts.keypair.publicKey.toBase58(), opts.mint, opts.rpcUrl);
@@ -659,14 +775,19 @@ export async function executeLiveSell(opts: ExecuteSellOpts): Promise<LiveTradeR
     };
   }
 
-  const graduated = await isGraduated(opts.mint);
-  const route: LiveTradeRoute = graduated ? "jupiter" : "pumpportal";
+  const routing = await routeFor(opts.mint, "sell");
+  // routeFor never blocks a sell; the check keeps the type narrow.
+  if (routing.route === "blocked") {
+    await recordSellFailure(routing.reason);
+    return { ok: false, dryRun, signature: null, simulatedSignature: null, route: "blocked", tradeId: openId, error: routing.reason };
+  }
+  const route: LiveTradeRoute = routing.route;
   const slippageBps = e.LIVE_SLIPPAGE_BPS;
   const priorityFeeLamports = Math.round(e.LIVE_PRIORITY_FEE_SOL * 1_000_000_000);
 
   let txBytes: Uint8Array;
   try {
-    if (route === "jupiter") {
+    if (routing.route === "jupiter") {
       const r = await jupiterSwap({
         publicKey: opts.keypair.publicKey.toBase58(),
         inputMint: opts.mint,
@@ -688,31 +809,26 @@ export async function executeLiveSell(opts: ExecuteSellOpts): Promise<LiveTradeR
         denominatedInSol: "false",
         slippageBps,
         priorityFeeSol: e.LIVE_PRIORITY_FEE_SOL,
+        pool: routing.pool,
       });
       txBytes = r.txBytes;
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log.error("live sell build failed", { mint: opts.mint, err: msg });
-    const open = await fetchOpenLiveByMint(opts.mint);
-    const openId = open[0]?.id ?? null;
-    if (openId) await markLivePositionCloseFailed(openId, msg);
+    log.error("live sell build failed", { mint: opts.mint, err: msg, source });
+    await recordSellFailure(msg);
     return {
       ok: false,
       dryRun,
       signature: null,
       simulatedSignature: null,
       route,
-      tradeId: null,
+      tradeId: openId,
       error: msg,
     };
   }
 
   const signed = signTx(txBytes, opts.keypair);
-
-  // If we have an open live position for this mint, mark it closed (or partially).
-  const open = await fetchOpenLiveByMint(opts.mint);
-  const openId = open[0]?.id ?? null;
 
   if (dryRun) {
     if (openId && percent === 100) {
@@ -742,20 +858,23 @@ export async function executeLiveSell(opts: ExecuteSellOpts): Promise<LiveTradeR
 
   try {
     const sig = await rpcSendBase64(opts.rpcUrl, signed.serialized);
-    if (openId && percent === 100) {
-      await closeLivePosition({
-        id: openId,
-        status: "closed",
-        exitReason: "manual",
-        txSignatureClose: sig,
+    // Not closed here: live-settlement books the confirmed proceeds and P&L, or
+    // undoes this marker if the transaction never lands.
+    if (openId) {
+      await markPendingSell(openId, {
+        sig,
+        percent,
+        final: percent === 100,
+        reason: opts.reason ?? "manual",
+        source,
       });
     }
-    log.info("live sell SENT", { mint: opts.mint, route, sig: sig.slice(0, 12) + "…", percent });
+    log.info("live sell SENT (pending confirmation)", { mint: opts.mint, route, sig: sig.slice(0, 12) + "…", percent, source });
     return { ok: true, dryRun: false, signature: sig, simulatedSignature: null, route, tradeId: openId };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log.error("live sell send failed", { mint: opts.mint, route, err: msg });
-    if (openId) await markLivePositionCloseFailed(openId, msg);
+    log.error("live sell send failed", { mint: opts.mint, route, err: msg, source });
+    await recordSellFailure(msg);
     return {
       ok: false,
       dryRun: false,

@@ -6,10 +6,16 @@ import { autoSessions } from "@/lib/db/schema";
 import { logger } from "@/lib/log";
 import { notify } from "@/lib/notify";
 import { autoSkipReasonLabel } from "@/lib/ui/plain-labels";
+import { researchPreset, researchStrategy } from "@/lib/strategies/bot-config";
+import type { StrategyId, ExecutionSetting } from "@/lib/strategies/catalog";
 
 const log = logger("repo:auto");
 
 export type AutoSessionParams = {
+  researchStrategy?: StrategyId;
+  researchExecution?: ExecutionSetting;
+  researchTargetWallet?: string;
+  presetName?: string;
   sizeSol: number;
   takeProfitPct: number;
   stopLossPct: number;
@@ -190,6 +196,13 @@ export async function startSession(opts: {
   mode: "paper" | "live";
   params: AutoSessionParams;
 }): Promise<AutoSessionDto> {
+  const strategy = researchStrategy(opts.params.researchStrategy);
+  if (opts.params.researchStrategy && !strategy) throw new Error("Unknown research strategy");
+  if (strategy) {
+    if (opts.mode !== "paper") throw new Error("Research strategies are paper-only");
+    if (!["OPTIMISTIC", "BASE", "CONSERVATIVE"].includes(opts.params.researchExecution ?? "BASE")) throw new Error("Invalid research execution setting");
+    opts = { ...opts, params: { ...opts.params, ...researchPreset(strategy, opts.params.researchExecution) } };
+  }
   // Stop any existing active session first.
   await getDb()
     .update(autoSessions)

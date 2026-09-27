@@ -1,8 +1,12 @@
 import bs58 from "bs58";
 import { BorshReader, safeNumber } from "@/lib/rpc/borsh";
-import { EVENT_DISCRIMINATORS, PUMP_TOKEN_DECIMALS, SOL_DECIMALS } from "./program";
+import { EVENT_DISCRIMINATORS, PUMP_BONDING_CURVE_PROGRAM, PUMP_TOKEN_DECIMALS, SOL_DECIMALS } from "./program";
+import { effectiveVSolFromReserves } from "./pumpswap-parser";
 
 const PROGRAM_DATA_PREFIX = "Program data: ";
+/** "Program <id> invoke [depth]" opens a frame; "... success" / "... failed" closes it. */
+const INVOKE_RE = /^Program (\w+) invoke \[\d+\]$/;
+const EXIT_RE = /^Program \w+ (success|failed)/;
 const LAMPORTS_PER_SOL = 10 ** SOL_DECIMALS;
 const TOKEN_BASE_UNITS = 10 ** PUMP_TOKEN_DECIMALS;
 
@@ -18,7 +22,15 @@ export type ParsedTradeEvent = {
   side: "buy" | "sell";
   solAmount: number;
   tokenAmount: number;
-  vSolAfter: number;
+  /**
+   * Curve-equivalent vSol after the trade, derived from the event's virtual SOL AND
+   * virtual token reserves (price = vSol / vTokens). Identical to the raw virtual
+   * SOL reserve on the standard curve (30 SOL × 1.073B tokens); on curves with a
+   * different constant (e.g. Mayhem-mode coins, whose virtual SOL starts near 0)
+   * the raw reserve is on another scale entirely, so it is converted. Null when
+   * either reserve is zero (no usable price).
+   */
+  vSolAfter: number | null;
 };
 
 export type ParsedCreateEvent = {
@@ -48,7 +60,23 @@ export type ParsedCompleteEvent = {
   bondingCurve: string;
 };
 
-export type ParsedPumpEvent = ParsedTradeEvent | ParsedCreateEvent | ParsedCompleteEvent;
+/**
+ * Position of this event within its transaction's decoded pump events, 0-based.
+ *
+ * One pump.fun transaction routinely emits MORE THAN ONE event: a create carries
+ * the dev's first buy (CreateEvent + TradeEvent), and the buy that fills the
+ * curve carries the graduation (TradeEvent + CompleteEvent). `events` is unique
+ * on (signature, instruction_index), so writing every event at 0 meant the
+ * second one hit ON CONFLICT DO NOTHING and vanished — measured 2026-09-27:
+ * zero `migrate` rows in 1.09M signatures, and zero of 2,147 dev buys stored.
+ *
+ * The first event in a transaction keeps index 0, so rows written before this
+ * existed keep their dedupe key and gap-recovery stays idempotent across the
+ * change.
+ */
+export type WithLogIndex = { logIndex?: number };
+
+export type ParsedPumpEvent = (ParsedTradeEvent | ParsedCreateEvent | ParsedCompleteEvent) & WithLogIndex;
 
 function b58(buf: Buffer): string {
   return bs58.encode(buf);
@@ -91,11 +119,15 @@ function decodeTrade(
     const mint = b58(r.pubkey());
     const solAmount = r.u64();
     const tokenAmount = r.u64();
-    const isBuy = r.bool();
+    const isBuyByte = r.u8();
+    // A borsh bool is exactly 0 or 1. Anything else is another program's layout
+    // that happens to share the "TradeEvent" discriminator.
+    if (isBuyByte > 1) return null;
+    const isBuy = isBuyByte === 1;
     const user = b58(r.pubkey());
     const ts = r.i64();
     const vSol = r.u64();
-    r.u64();
+    const vTokens = r.u64();
     const bt = classifyBlockTime(safeNumber(ts), ctx.blockTime);
     return {
       kind: isBuy ? "buy" : "sell",
@@ -112,7 +144,7 @@ function decodeTrade(
       side: isBuy ? "buy" : "sell",
       solAmount: safeNumber(solAmount) / LAMPORTS_PER_SOL,
       tokenAmount: safeNumber(tokenAmount) / TOKEN_BASE_UNITS,
-      vSolAfter: safeNumber(vSol) / LAMPORTS_PER_SOL,
+      vSolAfter: effectiveVSolFromReserves(safeNumber(vSol) / LAMPORTS_PER_SOL, safeNumber(vTokens)),
     };
   } catch {
     return null;
@@ -186,8 +218,26 @@ export function parseProgramLogs(
 ): ParsedPumpEvent[] {
   const out: ParsedPumpEvent[] = [];
   const ctx = { signature, slot, blockTime, blockTimeSource };
+  // Track which program is executing so only pump.fun's own events are decoded.
+  // A transaction's logs include every program it touches, and other launchpads
+  // (e.g. Raydium LaunchLab) emit a "TradeEvent" with the same Anchor
+  // discriminator but a different layout — decoding those as pump trades stored
+  // fabricated rows (793,100 SOL buys, vSol 9,007,199). Lines with no invoke
+  // context at all (hand-built inputs) are still accepted.
+  const invokeStack: string[] = [];
   for (const line of logs) {
+    const invoke = INVOKE_RE.exec(line);
+    if (invoke) {
+      invokeStack.push(invoke[1]!);
+      continue;
+    }
+    if (EXIT_RE.test(line)) {
+      invokeStack.pop();
+      continue;
+    }
     if (!line.startsWith(PROGRAM_DATA_PREFIX)) continue;
+    const emitter = invokeStack[invokeStack.length - 1];
+    if (emitter != null && emitter !== PUMP_BONDING_CURVE_PROGRAM) continue;
     const b64 = line.slice(PROGRAM_DATA_PREFIX.length);
     let buf: Buffer;
     try {
@@ -198,15 +248,18 @@ export function parseProgramLogs(
     if (buf.length < 8) continue;
     const disc = buf.subarray(0, 8);
     const body = buf.subarray(8);
+    // logIndex is the event's position among THIS transaction's pump events —
+    // what keeps a create and its dev buy, or a final buy and its graduation,
+    // from colliding on (signature, instruction_index).
     if (disc.equals(EVENT_DISCRIMINATORS.trade)) {
       const ev = decodeTrade(body, ctx);
-      if (ev) out.push(ev);
+      if (ev) out.push({ ...ev, logIndex: out.length });
     } else if (disc.equals(EVENT_DISCRIMINATORS.create)) {
       const ev = decodeCreate(body, ctx);
-      if (ev) out.push(ev);
+      if (ev) out.push({ ...ev, logIndex: out.length });
     } else if (disc.equals(EVENT_DISCRIMINATORS.complete)) {
       const ev = decodeComplete(body, ctx);
-      if (ev) out.push(ev);
+      if (ev) out.push({ ...ev, logIndex: out.length });
     }
   }
   return out;

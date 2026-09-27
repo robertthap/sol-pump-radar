@@ -4,11 +4,15 @@ import { DEFAULT_PARAMS, type AutoSessionParams, getActiveSession } from "@/lib/
 import { queueWebCommand } from "@/lib/runtime/queue-command";
 import { WebWriteOp } from "@/lib/runtime/web-writes";
 import { validateAutoStart } from "@/lib/runtime/auto-session-queue";
+import { researchPreset, researchStrategy } from "@/lib/strategies/bot-config";
+import type { ExecutionSetting } from "@/lib/strategies/catalog";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const PRESETS: Record<string, Partial<AutoSessionParams>> = {
+  graduation: researchPreset("graduation"),
+  scaleIn: researchPreset("scaleIn"),
   // Only enter coins whose trading is ACCELERATING with buyers on top.
   // Exits are identical to `balanced` on purpose: entry selectivity is the only
   // variable, so any difference in outcome is attributable to selection alone.
@@ -231,7 +235,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: gate.error }, { status: gate.status });
   }
 
-  let body: { preset?: string; sizeSol?: number; maxDailyLossSol?: number; maxConcurrent?: number } = {};
+  let body: { preset?: string; sizeSol?: number; maxDailyLossSol?: number; maxConcurrent?: number; researchExecution?: ExecutionSetting } = {};
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -239,13 +243,18 @@ export async function POST(req: Request) {
   }
 
   const presetKey = body.preset && PRESETS[body.preset] ? body.preset : "balanced";
+  const strategy = researchStrategy(presetKey);
+  if (strategy && gate.mode !== "paper") return NextResponse.json({ error: "These research strategies require a Demo (paper) session." }, { status: 400 });
+  if (body.researchExecution && !["OPTIMISTIC", "BASE", "CONSERVATIVE"].includes(body.researchExecution)) return NextResponse.json({ error: "Invalid execution setting" }, { status: 400 });
   const params: AutoSessionParams = {
     ...DEFAULT_PARAMS,
     ...PRESETS[presetKey],
     useLearnedAvoids: gate.mode === "live",
+    presetName: presetKey,
+    ...(strategy ? researchPreset(strategy, body.researchExecution) : {}),
   };
 
-  if (typeof body.sizeSol === "number" && Number.isFinite(body.sizeSol) && body.sizeSol > 0 && body.sizeSol <= 5) {
+  if (!strategy && typeof body.sizeSol === "number" && Number.isFinite(body.sizeSol) && body.sizeSol > 0 && body.sizeSol <= 5) {
     params.sizeSol = Math.round(body.sizeSol * 10000) / 10000;
   }
   if (

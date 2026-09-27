@@ -3,7 +3,12 @@ import { sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { appendEvent } from "@spr/core";
 import { logger } from "@/lib/log";
-import { paperOpen, paperClose } from "@/lib/paper/engine";
+import {
+  paperOpen,
+  paperClose,
+  paperResearchCensor,
+  paperResearchCloseAtMark,
+} from "@/lib/paper/engine";
 import { fetchDemoAccount } from "@/lib/db/repos/trading-mode";
 import { recordOutcome } from "@/lib/db/repos/outcomes";
 import {
@@ -11,6 +16,7 @@ import {
   type SellablePaperRow,
 } from "@/lib/paper/sellable-positions";
 import { isAutoPaperEntry, manualPaperExitReason } from "@/lib/paper/sell-helpers";
+import { finishResearchEpisode } from "@/lib/db/repos/research-bot";
 
 const log = logger("paper-trade-listener");
 
@@ -90,9 +96,40 @@ async function closeSellablePosition(
   pos: SellablePaperRow,
   correlationId: string,
   exitReason: string,
-): Promise<{ ok: true; pnlSol: number } | { ok: false; reason: string; code?: string }> {
+): Promise<{ ok: true; pnlSol: number | null; censored?: boolean } | { ok: false; reason: string; code?: string }> {
   if (pos.entry_v_sol == null) {
     return { ok: false, reason: "missing_entry_price" };
+  }
+  const features = pos.entry_features ?? {};
+  if (typeof features.research_strategy === "string") {
+    const ts = Date.now() / 1000;
+    const marked = await paperResearchCloseAtMark({ id: pos.id, reason: exitReason, ts });
+    if (marked.ok) {
+      if (features.session_id != null && features.research_episode != null) {
+        await finishResearchEpisode(
+          String(features.session_id),
+          String(features.research_episode),
+          "CLOSED",
+          `Manual strategy-mark close; P&L ${marked.pnl.toFixed(6)} SOL`,
+        );
+      }
+      return { ok: true, pnlSol: marked.pnl };
+    }
+    if (marked.code !== "STALE_MARK") {
+      return { ok: false, reason: marked.reason, code: marked.code };
+    }
+    const reason = "CENSORED: manual close requested without a fresh strategy price";
+    const censored = await paperResearchCensor({ id: pos.id, reason, ts });
+    if (!censored.ok) return { ok: false, reason: censored.reason };
+    if (features.session_id != null && features.research_episode != null) {
+      await finishResearchEpisode(
+        String(features.session_id),
+        String(features.research_episode),
+        "CENSORED",
+        reason,
+      );
+    }
+    return { ok: true, pnlSol: null, censored: true };
   }
   const closed = await paperClose({
     positionId: BigInt(pos.id),
@@ -157,9 +194,9 @@ async function processSellAll(
     const result = await closeSellablePosition(pos, correlationId, exitReason);
     if (result.ok) {
       closedCount += 1;
-      totalPnlSol += result.pnlSol;
+      totalPnlSol += result.pnlSol ?? 0;
       mints.push(pos.mint);
-      log.info("paper sell-all closed", { mint: pos.mint, pnlSol: result.pnlSol });
+      log.info("paper sell-all closed", { mint: pos.mint, pnlSol: result.pnlSol, censored: result.censored ?? false });
     } else {
       failedCount += 1;
       failures.push({ mint: pos.mint, reason: result.reason });
@@ -306,10 +343,11 @@ async function processIntent(r: IntentRow) {
       side: "sell",
       tradeId: pos.id,
       pnlSol: closed.pnlSol,
+      censored: closed.censored ?? false,
     },
     correlationId,
   }).catch(() => undefined);
-  log.info("paper sell executed", { mint, pnlSol: closed.pnlSol, exitReason });
+  log.info("paper sell executed", { mint, pnlSol: closed.pnlSol, censored: closed.censored ?? false, exitReason });
 }
 
 async function markRejected(

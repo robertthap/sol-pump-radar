@@ -111,6 +111,14 @@ const EnvSchema = z.object({
    */
   MAX_ENTRY_AGE_SEC: z.coerce.number().int().min(0).default(0),
   /**
+   * Max age (seconds) of the committed DECISION at the moment an auto entry is
+   * executed. Not token age: this is signal staleness. Measured 2026-09-06 over 149
+   * paper entries, decision -> execution was p50 2.7 s, p90 33.8 s, max 279 s — the
+   * bot was buying on minutes-old signals. Checked after every per-candidate lookup,
+   * immediately before the fill. 0 disables.
+   */
+  MAX_DECISION_AGE_SEC: z.coerce.number().int().min(0).default(15),
+  /**
    * Entry-activity floor (data-driven, refined 2026-06-15 on 320 trades). Require, for
    * DEX-flow coins, real activity at entry:
    *   dexBuysM5 >= ENTRY_MIN_DEX_BUYS_M5  OR  a smart-money buyer
@@ -167,6 +175,14 @@ const EnvSchema = z.object({
    * - full: the legacy full-system entry path (set this to revert).
    */
   ENTRY_MODE: z.enum(["v2_simple", "full"]).default("v2_simple"),
+  /**
+   * Keep an active PAPER session running across a worker restart (crash, supervisor
+   * restart, deploy) instead of retiring it and logging the operator out. Off by
+   * default. LIVE sessions are always retired on restart regardless of this flag.
+   * Measured 2026-09-13: 42 of 76 sessions ended by worker_restart, median session
+   * 17 min, so no evaluation ever ran for days.
+   */
+  RESUME_PAPER_SESSION_ON_BOOT: z.enum(["on", "off"]).default("off"),
   /** Override analytics active-mint window (minutes). Defaults by SIGNAL_MODE. */
   ACTIVE_MINT_WINDOW_MINUTES: z.coerce.number().int().min(5).max(720).optional(),
   /** Looser auto-trader entry gates for paper/demo sessions. */
@@ -530,4 +546,9 @@ export function autoDemoRelaxEnabled(): boolean {
 /** T4-ablation-driven live entry: V2 (intelligence + rug veto) vs the full stack. */
 export function isV2SimpleEntry(): boolean {
   return env().ENTRY_MODE === "v2_simple";
+}
+
+/** True when a session left active before a restart should keep running (paper only). */
+export function shouldResumeSessionOnBoot(session: { mode: string } | null): boolean {
+  return session != null && session.mode === "paper" && env().RESUME_PAPER_SESSION_ON_BOOT === "on";
 }

@@ -886,6 +886,64 @@
     color: rgb(212 216 224);
   }
 
+  /* ── Coin Journey radar ────────────────────────────────────────────── */
+  /* Geometry animates rather than jumping between polls: the streams and bars keep their identity, so a coin's
+     path stays readable while the numbers under it change every 2 s. */
+  .radar-ribbon {
+    transition: d 700ms cubic-bezier(0.2, 0.8, 0.2, 1), fill-opacity 200ms ease;
+  }
+  .radar-node {
+    transition:
+      x 700ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      y 700ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      width 700ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      height 700ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      fill-opacity 200ms ease;
+  }
+  .radar-label {
+    transition: transform 700ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms ease;
+    cursor: pointer;
+  }
+  .radar-label text {
+    font-size: 10.5px;
+    fill: rgb(190 195 205);
+    paint-order: stroke;
+    stroke: rgb(11 13 16);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+  }
+  .radar-label text.radar-label-on {
+    fill: rgb(233 236 242);
+  }
+  .radar-label-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    fill: rgb(143 148 160);
+  }
+  /* Real money gets a pulse the paper lane does not have. */
+  .radar-live {
+    animation: radar-live-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes radar-live-pulse {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 1px rgb(125 240 255 / 0.4));
+    }
+    50% {
+      filter: drop-shadow(0 0 5px rgb(125 240 255 / 0.95));
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .radar-ribbon,
+    .radar-node,
+    .radar-label {
+      transition: none;
+    }
+    .radar-live {
+      animation: none;
+    }
+  }
+
   /* Larger tap targets on touch devices */
   @media (hover: none) and (pointer: coarse) {
     .btn,

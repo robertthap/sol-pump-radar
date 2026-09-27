@@ -1,0 +1,350 @@
+{
+  "answer_count": 43,
+  "exact_text_match": true,
+  "answers": [
+    {
+      "week": 1,
+      "source": "MN522_PBL Week1 (1).docx",
+      "index": 35,
+      "question": "How did threat actors adapt their strategies to exploit the COVID-19 pandemic, and what were the most common types of scams they employed?",
+      "number": 1,
+      "text": "Threat actors adapted their strategies by exploiting public fear and uncertainty surrounding COVID-19. They launched phishing emails and fake websites offering face masks, vaccines, COVID-19 cures, fraudulent investment opportunities, fake charity donations, and health updates while impersonating trusted organizations such as the CDC. These scams were designed to steal personal information, distribute malware, and extort money from victims."
+    },
+    {
+      "week": 1,
+      "source": "MN522_PBL Week1 (1).docx",
+      "index": 39,
+      "question": "What psychological factors made individuals more susceptible to cyber-attacks during the COVID-19 pandemic, and how can awareness be improved to prevent such exploitation in future crises?",
+      "number": 2,
+      "text": "During the COVID-19 pandemic, attackers exploited people's fear, anxiety, and urgency by sending fake emails about COVID-19 updates, vaccines, face masks, charities, and messages pretending to be from trusted organizations like the CDC. These psychological factors made many users click malicious links or open infected attachments. To prevent similar attacks in future crises, users should be educated to recognize phishing emails, verify information through official sources, and avoid opening suspicious links or attachments."
+    },
+    {
+      "week": 1,
+      "source": "MN522_PBL Week1 (1).docx",
+      "index": 42,
+      "question": "In what ways did the COVID-19-related cyber-attacks impact organizations and individuals, and what measures can be taken to mitigate these risks in similar future events?",
+      "number": 3,
+      "text": "COVID-19-related cyber-attacks resulted in financial losses, stolen credentials, malware infections, compromised personal data, and disrupted organizational operations. These risks can be reduced through regular cybersecurity awareness training, strong email filtering, multi-factor authentication, software updates, and verifying information only through official and trusted sources."
+    },
+    {
+      "week": 1,
+      "source": "MN522_PBL Week1 (1).docx",
+      "index": 46,
+      "question": "How can cybersecurity professionals and organizations better prepare for and respond to cyber threats that leverage current events and crises to deceive users?",
+      "number": 4,
+      "text": "Cybersecurity professionals and organizations can improve preparedness by implementing continuous security awareness programs, monitoring emerging threats, deploying advanced email and endpoint protection, conducting phishing simulations, and establishing incident response plans. Regular communication about current scams also helps users recognize and avoid attacks during future crises."
+    },
+    {
+      "week": 2,
+      "source": "MN22 pbl week 2 .docx",
+      "index": 32,
+      "question": "What factors contributed to the success of the activists' this attack in the 1970s?",
+      "number": 1,
+      "text": "The group succeeded mainly because they prepared for weeks before acting. They watched the building until they knew who used it, when it was empty and what lock they would face, so nothing on the night was guesswork. Security at the office was weak because it was treated as a minor site, which meant there was no alarm, no guard and no camera, and the files sat in ordinary cabinets. They also picked the night of a televised title fight, since the superintendent living below would be watching it and unlikely to notice noise. When the FBI grew suspicious and changed the lock, the group simply forced the door with a crowbar instead, and when a filing cabinet blocked their way it slid on the carpet because it was an obstacle rather than a real control."
+    },
+    {
+      "week": 2,
+      "source": "MN22 pbl week 2 .docx",
+      "index": 36,
+      "question": "What role did psychological manipulation play in the activists' strategies?",
+      "number": 2,
+      "text": "The clearest example is the Delaware draft board, where the lock could not be picked, so the group left a note saying \"Please don't lock this door tonight.\" It worked because a note tacked to a door looks official, and the employee who read it assumed a supervisor or caretaker had written it. Trust helped as well, since anything found inside a locked office is taken as genuine. The request was also small and polite, so refusing it would have meant challenging what seemed like a colleague, and because nobody clearly owned that door, the reader could assume someone else had already approved the change. The important point is that the lock was never beaten. It worked perfectly and an authorised person chose not to use it."
+    },
+    {
+      "week": 2,
+      "source": "MN22 pbl week 2 .docx",
+      "index": 40,
+      "question": "How can modern cybersecurity practices learn from tactics used in this case study?",
+      "number": 3,
+      "text": "People are still the easiest way in, and the note on the door is the ancestor of phishing emails, fake IT calls and malicious QR codes stuck up in a lobby. The method has not changed even though the medium has, so staff need to verify any instruction that would weaken a control, using a separate channel rather than trusting where the message appeared. One unlocked door gave up every file, which is why modern networks rely on segmentation, least privilege and multi factor authentication instead of a single barrier. There were also no alarms or logs, so nobody knew about the theft until the documents appeared in public, and that is the argument for logging and monitoring alongside prevention. Finally, the FBI noticed the group casing the building but only changed a lock, when reconnaissance should have triggered a proper review."
+    },
+    {
+      "week": 2,
+      "source": "MN22 pbl week 2 .docx",
+      "index": 44,
+      "question": "Report security controls which could have been implemented to prevent the successful attack discussed in this case study.",
+      "number": 4,
+      "text": "Training is the control that matters most here, because staff needed to know that a request to bypass security must be checked with a named person before anyone acts on it. That works better when the policy states plainly that unsigned notices are reported instead of obeyed, and when one person is accountable for locking each door at the end of the day. On the technical side, a monitored alarm, electronic access control with entry logs and CCTV would have recorded the break-in, while a door held open alert would have caught the Delaware trick outright because the state of the lock would have been watched rather than assumed. Physically, a reinforced door and frame would have resisted the crowbar, and anchored cabinets in a separately locked records room would have stopped one broken door from exposing everything. Even so, the note only worked because a working lock was left unused, so no amount of hardware would have helped without training and a verification rule behind it."
+    },
+    {
+      "week": 3,
+      "source": "MN522 pbl week 3 .docx",
+      "index": 15,
+      "question": "What would you have done to keep Ed away so you could reconfigure the network? ",
+      "number": 1,
+      "text": "I would have arranged a legitimate business reason to keep Ed away from the office, such as sending him to an off-site meeting, training session, or client visit. During his absence, the security team could securely reset administrative passwords, back up critical systems, document the network configuration, and monitor for any suspicious activity before informing him of the investigation."
+    },
+    {
+      "week": 3,
+      "source": "MN522 pbl week 3 .docx",
+      "index": 19,
+      "question": "How could you have tricked Ed into giving up the passwords without revealing to him that he was under suspicion? ",
+      "number": 2,
+      "text": "Rather than deceiving him into revealing passwords directly, I would use a legitimate company process, such as a mandatory security audit, password rotation, or migration to a new identity management system. This would require all administrators to update or securely record credentials in the organization's password management system without alerting Ed that he was under investigation."
+    },
+    {
+      "week": 3,
+      "source": "MN522 pbl week 3 .docx",
+      "index": 22,
+      "question": "What measures can companies take to prevent insider threats like the one posed by Ed?",
+      "number": 3,
+      "text": "Companies should implement the principle of least privilege, role-based access control, multi-factor authentication (MFA), regular security audits, continuous log monitoring, separation of duties, mandatory vacations, and secure password management. Background checks, employee security awareness training, and data loss prevention (DLP) tools can also help detect and prevent malicious insider activity."
+    },
+    {
+      "week": 3,
+      "source": "MN522 pbl week 3 .docx",
+      "index": 25,
+      "question": "How can organizations balance trust and security when granting administrative access to employees?",
+      "number": 4,
+      "text": "Organizations should trust employees while enforcing strong security controls. Administrative access should be limited to only what is necessary, monitored through audit logs, and regularly reviewed. Critical systems should require dual control or shared administration so that no single employee has complete control. This approach maintains operational efficiency while reducing the risk of insider abuse."
+    },
+    {
+      "week": 4,
+      "source": "MN522 PBl week_04.docx",
+      "index": 25,
+      "question": "Discuss the ethical considerations involved in assisting someone to recover a forgotten password for a high-value asset like a Bitcoin wallet.",
+      "number": 1,
+      "text": "Mike needed to make sure that TG was the legitimate owner of the Bitcoin and had permission to recover the encrypted file. Since the Bitcoin was worth more than $300,000, unauthorized access could lead to theft or misuse. Mike therefore made a contract with TG before starting the work. He also needed to protect TG's confidential information and use the recovered password only for the agreed purpose. This shows the importance of authorization, privacy, confidentiality, and professional ethics when recovering passwords."
+    },
+    {
+      "week": 4,
+      "source": "MN522 PBl week_04.docx",
+      "index": 27,
+      "question": "What challenges did Mike face in attempting to crack the zip file encryption, and how did he overcome them?",
+      "number": 2,
+      "text": "Mike faced several challenges because the ZIP file used a proprietary encryption algorithm and had an extremely large number of possible passwords. He also did not have the complete ZIP file, only its encrypted header metadata. Mike used information from TG's laptop, including the ZIP version and file timestamp, to reduce the possible combinations. He and Nash developed cryptanalysis code in C and used GPUs to speed up the password testing. After the first attempt failed for 10 days, TG discovered a GPU processing error. After fixing the error, Mike found the correct key within one day."
+    },
+    {
+      "week": 4,
+      "source": "MN522 PBl week_04.docx",
+      "index": 29,
+      "question": "Explain the potential risks and consequences of forgetting passwords for encrypted files and how individuals can mitigate these risks.",
+      "number": 3,
+      "text": "The case shows that forgetting a password for an encrypted file can cause permanent loss of access to valuable information. TG almost lost access to Bitcoin worth more than $300,000 because he forgot the ZIP password. Recovering encrypted information can also take months and require expensive specialist skills. Individuals can reduce these risks by using password managers, secure password backups, recovery keys, and secure storage of important passwords. Important passwords should not have only one copy."
+    },
+    {
+      "week": 4,
+      "source": "MN522 PBl week_04.docx",
+      "index": 31,
+      "question": "What role did collaboration play in the successful recovery of the Bitcoin wallet password?",
+      "number": 4,
+      "text": "Collaboration played an important role in solving the problem. Mike worked with his colleague Nash to develop the cryptanalysis program and improve its performance. TG also helped by identifying the GPU processing error that was causing incorrect password guesses. After the error was corrected, the correct key was found within one day. Therefore, the case demonstrates that teamwork, sharing technical knowledge, and identifying problems from different perspectives contributed to the successful recovery."
+    },
+    {
+      "week": 5,
+      "source": "MN522_pbl week 5.docx",
+      "index": 28,
+      "question": "Report the impact of ransomware attacks on critical infrastructure and public safety.",
+      "number": 1,
+      "text": "Answer: Ransomware can seriously affect critical infrastructure such as hospitals, fuel pipelines, government agencies and emergency services. It can make important systems and data unavailable, causing delays, financial losses and risks to public safety. For example, the Colonial Pipeline attack caused fuel shortages and major disruption."
+    },
+    {
+      "week": 5,
+      "source": "MN522_pbl week 5.docx",
+      "index": 30,
+      "question": "Explain the ethical considerations for organizations when deciding whether to pay a ransomware ransom.",
+      "number": 2,
+      "text": "Answer: Organizations must carefully consider whether paying the ransom is ethical. Paying may restore systems quickly and protect people, but it also gives money to criminals and may encourage more ransomware attacks. Organizations should first consider backups, recovery options, legal requirements and the possible impact on people."
+    },
+    {
+      "week": 5,
+      "source": "MN522_pbl week 5.docx",
+      "index": 32,
+      "question": "How has the rise of cyber insurance influenced the frequency and handling of ransomware attacks?",
+      "number": 3,
+      "text": "Answer: Cyber insurance can help organizations pay for recovery, investigation and other costs after a ransomware attack. However, if insurance covers ransom payments, attackers may be more willing to target insured organizations because they believe the ransom will be paid. Therefore, cyber insurance can have both positive and negative effects."
+    },
+    {
+      "week": 5,
+      "source": "MN522_pbl week 5.docx",
+      "index": 35,
+      "question": "Recommend strategies organizations should implement to mitigate the risks of ransomware attacks.",
+      "number": 4,
+      "text": "Answer: Organizations should regularly back up important data, use multi-factor authentication, update software, train employees to identify phishing, limit user access and separate important networks. They should also have and regularly test an incident-response plan so they can recover quickly without relying on ransom payments."
+    },
+    {
+      "week": 6,
+      "source": "MN522_pbl week 6.docx",
+      "index": 24,
+      "question": "Should all tech platforms have a universal “digital-legacy contacts” policy? What should that policy look like?",
+      "number": 1,
+      "text": "Answer: Yes. All major technology platforms should have a standard digital-legacy policy so users can decide in advance who can access their digital information after death or incapacity. The policy should allow users to nominate trusted contacts, specify which data can be accessed, and require proof such as a death certificate or legal documentation. It should also protect privacy by preventing the trusted person from simply receiving the user's password. Different levels of access should be available depending on the type of information."
+    },
+    {
+      "week": 6,
+      "source": "MN522_pbl week 6.docx",
+      "index": 27,
+      "question": "What about a person who was incapacitated and unable to access their information, but it was critical that the information be accessible? How could someone prove that they needed access? ",
+      "number": 2,
+      "text": "Answer: Access could be provided through a formal verification process. The person requesting access could provide medical evidence, legal documents, proof of relationship, or a court-appointed authority showing that the account holder is unable to manage their account. The platform should then verify the request and provide only the minimum information necessary. This would balance the need for access with the user's privacy and security."
+    },
+    {
+      "week": 6,
+      "source": "MN522_pbl week 6.docx",
+      "index": 30,
+      "question": "How could this be abused by threat actors?",
+      "number": 3,
+      "text": "Answer: Threat actors could pretend to be family members or legal representatives to gain access to someone's digital accounts. They could use fake death certificates, stolen identity documents, social engineering, phishing, or compromised email accounts to convince a platform that they are an authorised person. Once access is obtained, they could steal personal information, financial data, private messages, or use the account for further fraud. Therefore, platforms need strong identity verification and multi-factor authentication before granting legacy access."
+    },
+    {
+      "week": 7,
+      "source": "MN522_pbl_week 07.docx",
+      "index": 29,
+      "question": "Should TTE have been tested more thoroughly before it was chosen for use on a spacecraft? ",
+      "number": 1,
+      "text": "Answer: Yes, TTE should have been tested more thoroughly before being used on spacecraft because spacecraft networks are safety-critical and have almost no room for failure. Although TTE provides benefits such as low latency, fault tolerance, and reduced weight, space, power, and cost, the PCspooF attack showed that its isolation could be bypassed. More extensive security testing, including penetration testing and simulated cyberattacks, could have identified this vulnerability before deployment. Therefore, systems used in spacecraft should be tested not only under normal conditions but also against possible cyberattacks and unexpected failures."
+    },
+    {
+      "week": 7,
+      "source": "MN522_pbl_week 07.docx",
+      "index": 33,
+      "question": "Despite the limitations of weight, space, power, and cost that drove engineers to choose TTE over multiple segregated networks, is this a valid trade-off? ",
+      "number": 2,
+      "text": "Answer: The trade-off is understandable because reducing weight, space, power consumption, and cost is extremely important in spacecraft. TTE allows different types of traffic to share one network while still providing fast and reliable communication. However, the PCspooF attack demonstrated that a problem with a non-critical device could affect critical communications across the network. Therefore, using TTE can be a valid trade-off, but only if strong security controls and additional protection are implemented. Saving resources should not come at the expense of the safety of the spacecraft and astronauts."
+    },
+    {
+      "week": 7,
+      "source": "MN522_pbl_week 07.docx",
+      "index": 37,
+      "question": "Should there be a separate network to handle mission-critical functions? Why?",
+      "number": 3,
+      "text": "Answer:Yes, there should ideally be additional isolation or a separate network for mission-critical functions because systems such as navigation, steering, engine control, and docking require extremely reliable communication. Separating these functions could prevent problems or attacks affecting less-critical systems from interfering with critical operations. However, completely separate networks would increase weight, space, power, and cost. A suitable solution could therefore be to keep TTE for general communication while providing strong physical or logical isolation for the most critical systems, along with authentication, monitoring, redundancy, and regular security testing."
+    },
+    {
+      "week": 7,
+      "source": "MN522_pbl_week 07.docx",
+      "index": 41,
+      "question": "What are the potential implications of the PCspooF vulnerability for other industries using TTE networks?",
+      "number": 4,
+      "text": "Answer: The PCspooF vulnerability could have serious implications for other industries that use TTE, including helicopters, industrial control systems, and wind turbines. An attacker could potentially disrupt communication between critical systems by exploiting a less-critical device connected to the network. In a helicopter, this could affect safety-related systems, while in industrial or energy systems it could cause equipment failures, production disruption, or unsafe operations. Therefore, organizations using TTE should identify similar vulnerabilities, isolate critical systems where possible, monitor network activity, and conduct regular security and penetration testing to reduce the risk of attacks."
+    },
+    {
+      "week": 8,
+      "source": "MN522_pbl_ week 8.docx",
+      "index": 19,
+      "question": "Analyse the scenario above and identify the retailer’s mistakes that made it easier for attackers to take over the retailer’s network. ",
+      "number": 1,
+      "text": "Answer: The retailer made several mistakes that made it easier for attackers to enter its network. The company allowed third-party contractors, such as the HVAC company, to access its network using usernames and passwords without sufficient security controls. The network was also not properly segmented, which allowed attackers to move from the compromised contractor network toward sensitive systems. In addition, the retailer publicly exposed information about its network through the supplier portal and Excel file metadata. The company also had insufficient monitoring and detection systems to identify suspicious activities early."
+    },
+    {
+      "week": 8,
+      "source": "MN522_pbl_ week 8.docx",
+      "index": 23,
+      "question": "Propose the networking technologies that could have been used to enhance the security in the above case. Explain how these technologies would enhance the security.",
+      "number": 2,
+      "text": "Answer: The retailer could have used several networking technologies to improve security. Firewalls could control and block unauthorized network traffic, while network segmentation and VLANs could separate third-party systems from sensitive payment systems. VPN with multi-factor authentication (MFA) could provide secure remote access and prevent attackers from using stolen passwords alone. IDS/IPS could monitor network traffic and detect or block suspicious activities. Zero Trust technology could also verify every user and device before allowing access to specific resources."
+    },
+    {
+      "week": 8,
+      "source": "MN522_pbl_ week 8.docx",
+      "index": 27,
+      "question": "Assess and propose three networking devices to improve the security in the above-mentioned case.",
+      "number": 3,
+      "text": "Answer: Three important networking devices that could improve security are a Next-Generation Firewall, IDS/IPS device, and Network Access Control (NAC) device. A Next-Generation Firewall would control traffic between the contractor network and the retailer's important systems. An IDS/IPS device would monitor network traffic and detect or block attacks and unusual activities. A NAC device would check users and devices before allowing them to connect to the network and could prevent infected contractor computers from accessing sensitive systems."
+    },
+    {
+      "week": 8,
+      "source": "MN522_pbl_ week 8.docx",
+      "index": 31,
+      "question": "How can organizations better manage third-party access to their networks to prevent similar security breaches?",
+      "number": 4,
+      "text": "Answer: Organizations can better manage third-party access by following the principle of least privilege, which means contractors should only receive access to the systems they need. Organizations should use MFA, strong passwords, temporary accounts, and regular reviews of third-party accounts. Contractor networks should be separated from critical systems using firewalls and network segmentation. All third-party activities should also be monitored and logged so that suspicious behaviour can be detected quickly. Finally, organizations should require contractors to use updated antivirus or endpoint security and immediately disable accounts if a contractor's device or credentials are compromised."
+    },
+    {
+      "week": 9,
+      "source": "MN522_pbl_week9.docx",
+      "index": 28,
+      "question": "How can cloud service providers balance the need for innovation with the requirements of government regulations? ",
+      "number": 1,
+      "text": "Answer: Cloud service providers can strike the right balance between innovation and regulation by incorporating security, privacy, compliance, and risk management into the development lifecycle of their cloud services. Regulatory requirements can be viewed not as an obstacle, but as an opportunity to leverage regulatory requirements in the design of new cloud services. For instance they may employ encryption, access controls, periodic security testing, data-location controls and robust monitoring. Providers should also keep in touch with regulators regularly to ensure they are aware of the evolving requirements. It enables businesses to stay up to date with emerging technologies like AI and automation, without compromising security measures for customer data or legal requirements."
+    },
+    {
+      "week": 9,
+      "source": "MN522_pbl_week9.docx",
+      "index": 32,
+      "question": "Should governments attempt to regulate cloud computing? Will this result in more cloud computing services? Or will it weaken existing cloud providers? ",
+      "number": 2,
+      "text": "Answer: Yes, governments need to control cloud computing, as financial systems, healthcare, government services, and other critical operations are run on cloud services. The regulations can have various positive effects, such as enhancing cybersecurity, safeguarding customer information, and mitigating the risks associated with relying on a limited number of major cloud service providers. There should be a balance in regulation, however. Over- or overly complex regulations may cause higher operational costs, hinder innovation and make it hard for smaller cloud firms to compete. In fact, well-designed regulations might help to promote the use of cloud services, by fostering a level and trustworthy marketplace with confidence that customers will use services from different providers."
+    },
+    {
+      "week": 9,
+      "source": "MN522_pbl_week9.docx",
+      "index": 36,
+      "question": "Will additional cloud services provide a higher level of service than is now available? What are the risks of government regulations?",
+      "number": 3,
+      "text": "Answer: The more cloud service providers, the better the overall level of service would be, as companies would be competing for the best service: on pricing, reliability, security, performance and features. This competition may incentivize service providers to provide a higher quality service while decreasing the reliance on a few service providers. But there are risks linked to government regulation as well. Strict regulations could lead to higher costs of compliance, more staff and security measures, and delay the introduction of new technology. Regulatory differences from country to country may add to the complexity of worldwide cloud operations. So, the regulations should be aimed at minimizing the significant risks without unnecessarily stifling innovation."
+    },
+    {
+      "week": 9,
+      "source": "MN522_pbl_week9.docx",
+      "index": 40,
+      "question": "What impact might increased regulation have on the global competitiveness of cloud service providers? ",
+      "number": 4,
+      "text": "Answer: More regulation may be beneficial or detrimental to the competitiveness of the world. Firm policies can help foster customer confidence, security and reliability, potentially drawing customers in to highly regulated sectors like banking and health care. But providers may incur increased expenses in order to meet various regulations in various countries. Smaller providers might not be able to keep up with these expenses, whereas larger businesses might have the luxury of doing so. Hence, it is advisable for the governments to establish clear, consistent and internationally compatible regulations to enable the cloud service providers to continue being innovative and competitive in the global market."
+    },
+    {
+      "week": 10,
+      "source": "MN522_pbl_week10.docx",
+      "index": 25,
+      "question": "Report the key challenges faced by cybersecurity professionals today.",
+      "number": 1,
+      "text": "Answer: Cybersecurity professionals are facing a number of challenges due to the increasing frequency, complexity and predictability of cyber threats. Organisations are targeted by attackers through various methods including: phishing, ransomware, malware and data theft. Meanwhile, new technologies, including those of the cloud, artificial intelligence, mobile devices and IoT, are posing new security threats. Additionally, cybersecurity experts are required to observe privacy regulations and other laws and regulations. Another big problem is getting on top of the situation should a security incident occur, and making choices that are technically sound, ethically and legally sound. The Uber case illustrates how cybersecurity employees can also experience confusion on how to categorize and report an incident."
+    },
+    {
+      "week": 10,
+      "source": "MN522_pbl_week10.docx",
+      "index": 28,
+      "question": "Discuss the role of bug bounty programs in improving the security posture of organizations.",
+      "number": 2,
+      "text": "Answer: Bug bounty programs are a great way for organisations to find and fix security vulnerabilities before they can be exploited by malicious hackers. In such schemes, companies give the security researchers a system to test and then report vulnerabilities following specific guidelines. Researchers can be paid for discovering and responsibly reporting vulnerabilities. This provides an organisation with access to lots of security researchers with varying skills and perspectives and can enable them to find problems that their own internal security teams might not be aware of. Bug bounty programs can also create a controlled environment where researchers can report vulnerabilities as opposed to seeing each security test as an attack on the organization. But there have to be definite limits and guidelines in place for organisations to ensure that they do not test any systems that are prohibited from being tested and that they do not do things that are not allowed."
+    },
+    {
+      "week": 10,
+      "source": "MN522_pbl_week10.docx",
+      "index": 32,
+      "question": "Explain the ethical considerations in handling a cyber incident.",
+      "number": 3,
+      "text": "Answer: The technical responsibilities of cybersecurity are not the only ones that must be taken into account during a cyber incident.Ethical responsibilities also come into play when handling a cyber incident. They should ensure that any investigation or security testing is properly authorized, and private or confidential information is safeguarded. Professionals should also tell the truth about the situation and not withhold key information, or offer false reports. Log, email, and files and other digital information should be carefully retained to ensure that an incident can be investigated properly. There are also relevant laws and requirements for breach notification that organisations have to comply with. With the Uber case, the incident was deemed a “bug bounty” raised ethical and legal questions, as sensitive customer information has already been accessed and stolen. Transparency is important, proper reporting and careful decision making is important in response to cyber incidents."
+    },
+    {
+      "week": 10,
+      "source": "MN522_pbl_week10.docx",
+      "index": 36,
+      "question": "What impact do data breaches have on organizations and their customers?",
+      "number": 4,
+      "text": "Answer: Data breaches can have serious effects on both organisations and their customers. For organisations, a breach can result in financial losses, legal action, investigation costs, business disruption and damage to their reputation. Customers may lose trust in the organisation if they believe their personal information was not properly protected. For customers, exposed information can lead to privacy problems, identity theft, phishing attacks, fraud and possible financial losses. The effects can continue even after the organisation has fixed the original security problem because stolen information may be used later by attackers. Therefore, organisations need strong security controls, effective monitoring and a clear incident response process to reduce the impact of data breaches."
+    },
+    {
+      "week": 11,
+      "source": "MN522 pbl week 11.docx",
+      "index": 39,
+      "question": "How can organizations effectively educate non-tech-savvy users about cybersecurity without overwhelming them?",
+      "number": 1,
+      "text": "Answer: Organizations should keep cybersecurity awareness simple, practical and focused on the risks employees are most likely to face. Instead of giving users long technical explanations or warning them about every possible threat, training should concentrate on actions such as using strong passwords, enabling MFA, installing updates, identifying phishing emails and reporting suspicious activity. Short demonstrations, realistic examples and regular reminders are more effective than highly technical training. The case study also shows that exaggerated warnings can create anxiety and cause users to ignore security advice, so organizations should explain both the level of risk and the appropriate response."
+    },
+    {
+      "week": 11,
+      "source": "MN522 pbl week 11.docx",
+      "index": 41,
+      "question": "Should government agencies be more responsible regarding distributing information security information to the public? ",
+      "number": 2,
+      "text": "Answer: Yes. Government agencies should ensure that cybersecurity warnings are supported by reliable evidence before presenting them as significant public threats. In the case study, warnings about juice jacking were repeated even though the agencies could not provide documented examples of real-world attacks. This can create unnecessary fear and may reduce public trust in future security warnings. Government agencies should clearly distinguish between a theoretical vulnerability, a proof-of-concept attack and a threat that is actively occurring in the real world."
+    },
+    {
+      "week": 11,
+      "source": "MN522 pbl week 11.docx",
+      "index": 43,
+      "question": "Should security professionals first vet these? ",
+      "number": 3,
+      "text": "Answer: Security professionals should review cybersecurity warnings before they are widely distributed, especially when the threat is technical or not well documented. They can examine whether there are confirmed incidents, whether the attack is technically realistic, how difficult it is to perform and how likely ordinary users are to be affected. In the juice-jacking example, expert review could have clarified that the technique was technically possible but that the case study reports no documented real-world attacks. This would allow the public to receive more balanced and useful security advice."
+    },
+    {
+      "week": 11,
+      "source": "MN522 pbl week 11.docx",
+      "index": 45,
+      "question": "What could online and print media sources do to ensure that their distributed information is indeed accurate?",
+      "number": 4,
+      "text": "Answer: Media organisations should verify cybersecurity claims using multiple credible sources before publishing them. Journalists should consult qualified security researchers, request evidence of confirmed attacks and avoid sensational headlines that make theoretical risks appear common or immediate. They should also explain the difference between a proof-of-concept, a possible attack and a verified real-world incident. If evidence is limited or disputed, this uncertainty should be clearly stated. This would help readers understand the actual level of risk and focus their attention on more common threats such as phishing, weak passwords and missing security updates."
+    }
+  ]
+}

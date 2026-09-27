@@ -1,7 +1,13 @@
 import "server-only";
-import bs58 from "bs58";
-import { rpcHttpUrls } from "@/lib/env";
-import { WSOL_MINT } from "./program";
+import { rpcCall } from "@/lib/rpc/json-rpc";
+import {
+  classifyPoolAccount,
+  type PoolAccountResolution,
+  type PoolAccountValue,
+  type PoolInfo,
+} from "./pool-account";
+
+export type { PoolInfo } from "./pool-account";
 
 /**
  * T1.2 — PumpSwap pool → mint resolver. The swap event carries the pool address
@@ -15,26 +21,13 @@ import { WSOL_MINT } from "./program";
  *   quote_mint @ absolute offset 75 (32 bytes)
  */
 
-export type PoolInfo = { memeMint: string; baseIsWsol: boolean };
-
 const cache = new Map<string, PoolInfo | null>();
 
-async function rpc<T>(method: string, params: unknown[]): Promise<T | null> {
-  const url = rpcHttpUrls()[0];
-  if (!url) return null;
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!r.ok) return null;
-    const j = (await r.json()) as { result?: T };
-    return j.result ?? null;
-  } catch {
-    return null;
-  }
+function cacheResolution(pool: string, resolution: PoolAccountResolution): PoolInfo | null {
+  if (resolution.kind === "retry") return null;
+  const info = resolution.kind === "resolved" ? resolution.info : null;
+  cache.set(pool, info);
+  return info;
 }
 
 /**
@@ -47,28 +40,17 @@ export async function resolvePoolInfo(pool: string): Promise<PoolInfo | null> {
   const cached = cache.get(pool);
   if (cached !== undefined) return cached;
 
-  const acc = await rpc<{ value: { data: [string, string] } | null }>("getAccountInfo", [
-    pool,
-    { encoding: "base64" },
-  ]);
-  const dataB64 = acc?.value?.data?.[0];
-  if (!dataB64) {
-    // RPC failure or missing account — don't cache, allow retry.
-    return null;
-  }
-  const buf = Buffer.from(dataB64, "base64");
-  if (buf.length < 107) {
-    cache.set(pool, null); // not a PumpSwap pool layout — cache the negative
-    return null;
-  }
-  const baseMint = bs58.encode(buf.subarray(43, 75));
-  const quoteMint = bs58.encode(buf.subarray(75, 107));
-  let info: PoolInfo | null = null;
-  if (baseMint === WSOL_MINT) info = { memeMint: quoteMint, baseIsWsol: true };
-  else if (quoteMint === WSOL_MINT) info = { memeMint: baseMint, baseIsWsol: false };
-  // else: neither side is WSOL → can't price in SOL; info stays null (cached).
-  cache.set(pool, info);
-  return info;
+  // Every configured endpoint, not just the first. This asked endpoint 0 alone,
+  // so when the Helius key hit its quota (HTTP 429 "max usage reached") every
+  // pool failed to resolve, every PumpSwap swap was dropped as an unresolved
+  // pool, and `events` held zero venue='pumpswap' rows — with no error logged
+  // anywhere, because a failure here is indistinguishable from "not a pool".
+  const acc = await rpcCall<{ value: { data: [string, string]; owner: string } | null }>(
+    "getAccountInfo",
+    [pool, { encoding: "base64" }],
+    5_000,
+  );
+  return cacheResolution(pool, classifyPoolAccount(acc?.value ?? null));
 }
 
 /** Batched resolution — resolves many pools, returning a map of the ones that
@@ -76,14 +58,40 @@ export async function resolvePoolInfo(pool: string): Promise<PoolInfo | null> {
 export async function resolvePoolInfoBatch(pools: string[]): Promise<Map<string, PoolInfo>> {
   const out = new Map<string, PoolInfo>();
   const unknown = [...new Set(pools)].filter((p) => !cache.has(p));
-  // Resolve unknowns (sequentially — pool resolution is one-time per pool and
-  // rare; a graduated-coin session sees a bounded set of pools).
-  for (const p of unknown) {
-    await resolvePoolInfo(p).catch(() => null);
-  }
+  // getMultipleAccounts accepts up to 100 addresses. One batched request replaces
+  // dozens of individual getAccountInfo calls: the live firehose regularly has
+  // 50-100 unseen pools in a flush, and the old 10-lane resolver took longer than
+  // Graduation Scout's complete +1s..+5s observation window.
+  const batches: string[][] = [];
+  for (let i = 0; i < unknown.length; i += 100) batches.push(unknown.slice(i, i + 100));
+  const LANES = 4;
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(LANES, batches.length) }, async () => {
+      while (next < batches.length) {
+        const batch = batches[next++]!;
+        const response = await rpcCall<{ value: Array<PoolAccountValue | null> }>(
+          "getMultipleAccounts",
+          [batch, { encoding: "base64" }],
+          2_000,
+        );
+        if (!response || !Array.isArray(response.value) || response.value.length !== batch.length) {
+          continue; // transient RPC failure: leave every pool uncached for retry
+        }
+        for (let i = 0; i < batch.length; i++) {
+          cacheResolution(batch[i]!, classifyPoolAccount(response.value[i] ?? null));
+        }
+      }
+    }),
+  );
   for (const p of pools) {
     const info = cache.get(p);
     if (info) out.set(p, info);
   }
   return out;
+}
+
+/** True when a missing batch result was transient and its raw swaps should be retried. */
+export function isPoolResolutionPending(pool: string): boolean {
+  return !cache.has(pool);
 }

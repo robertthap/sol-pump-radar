@@ -21,6 +21,8 @@ const HaltButton = dynamic(() => import("@/components/HaltButton").then((m) => (
  */
 const NAV = [
   { href: "/trade", label: "Trade" },
+  { href: "/radar", label: "Radar" },
+  { href: "/strategies", label: "Strategies" },
   { href: "/wallet", label: "Wallet" },
 ] as const;
 

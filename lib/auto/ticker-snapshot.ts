@@ -25,9 +25,14 @@ export type TickerSourceStatus =
 export const TICKER_STALE_MS = 5_000;
 
 export type TickerPosition = {
+  strategyName?: string | null;
+  strategyReason?: string | null;
+  researchStatus?: string | null;
+  added?: boolean;
   id: string;
   mint: string;
   symbol: string | null;
+  name: string | null;
   source: "paper" | "live";
   sizeSol: number;
   /** Unrealized P&L in SOL; null when no price could be resolved yet. */
@@ -43,16 +48,31 @@ export type TickerPosition = {
 
 /** A position closed during this session - realized P&L and why it closed. */
 export type TickerClosedPosition = {
+  strategyName?: string | null;
   id: string;
   mint: string;
   symbol: string | null;
+  name: string | null;
   source: "paper" | "live";
   sizeSol: number;
+  entryMcapUsd: number | null;
+  exitMcapUsd: number | null;
   /** Realized P&L in SOL. */
   pnlSol: number | null;
   exitReason: string | null;
   openedAt: string;
   closedAt: string | null;
+};
+
+export type TickerScout = {
+  id: string;
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  strategy: string;
+  status: string;
+  reason: string;
+  ts: string;
 };
 
 export type TickerPortfolio = {
@@ -240,9 +260,15 @@ export type TickerResponse = {
   solAud: number;
   portfolio: TickerPortfolio;
   positions: TickerPosition[];
-  /** This session's closed trades, newest first (bounded by the snapshot's 60-row cap). */
+  /** Recent closed trades for the initial paint; the Closed tab loads the complete history. */
   closedPositions: TickerClosedPosition[];
+  /** True session-wide total, independent of the initial closedPositions preview. */
+  closedPositionCount: number;
   bot: {
+    presetName?: string;
+    researchStrategy?: string | null;
+    researchStatus?: string | null;
+    research?: { counts: Array<{status:string;count:number}>; recent: Array<{id:string;mint:string;symbol:string|null;name:string|null;strategy:string;status:string;reason:string;features:Record<string,unknown>;ts:string}>; performance: {closed:number;wins:number;censored:number} } | null;
     running: boolean;
     sizeSol: number;
     maxDailyLossSol: number;
@@ -272,5 +298,13 @@ export type TickerResponse = {
     /** Prefill for the controls when no session exists. */
     defaults: { sizeSol: number; maxDailyLossSol: number; maxConcurrent: number };
   };
+  /** Recent evaluated candidates and unresolved/censored research observations. */
+  scouting: TickerScout[];
   logs: TickerLogEntry[];
+};
+
+export type TickerClosedPositionsResponse = {
+  sessionId: string | null;
+  total: number;
+  closedPositions: TickerClosedPosition[];
 };

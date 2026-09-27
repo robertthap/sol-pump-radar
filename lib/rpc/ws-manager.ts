@@ -14,6 +14,30 @@ export type LogsNotification = {
 };
 
 /**
+ * Pull a logsNotification's payload out of `params.result`.
+ *
+ * The slot lives in `result.context.slot`, NOT in `result.value` — a
+ * logsNotification's value carries only signature, err and logs. Reading it off
+ * `value` yielded undefined, so every event was stored at slot 0. That is not
+ * cosmetic: the strategy fill model asks for the state at `decision_slot +
+ * delay`, and `decision_slot + 3 > 0` is always true when every slot is 0, so
+ * fillState() returned null for every episode and no paper position could ever
+ * open. It also pinned the gap-recovery high-water mark at 0.
+ *
+ * `value.slot` stays as a fallback so hand-built inputs still work. Returns null
+ * when there is no value to deliver.
+ */
+export function logsNotificationFrom(result: unknown): LogsNotification | null {
+  const r = (result as {
+    context?: { slot?: number };
+    value?: Omit<LogsNotification, "slot"> & { slot?: number };
+  }) ?? null;
+  if (!r?.value) return null;
+  const slot = typeof r.context?.slot === "number" ? r.context.slot : (r.value.slot ?? 0);
+  return { ...r.value, slot };
+}
+
+/**
  * T1.1 — emitted after a successful re-subscribe following a real disconnect.
  * The ingestor uses this to compute the gap window and kick gap-recovery.
  * `lastSlot`/`lastSig` are the last successfully observed values from BEFORE
@@ -153,16 +177,16 @@ export class WsLogsSubscriber {
       return;
     }
     if (msg.method === "logsNotification") {
-      const r = (msg.params?.result as { value?: LogsNotification }) ?? null;
-      if (r && r.value) {
+      const value = logsNotificationFrom(msg.params?.result);
+      if (value) {
         // T1.1 — track HWM for gap detection. Slot may decrease across
         // independent forks in rare cases; keep max-seen as the watermark.
-        if (r.value.slot > this.lastSlot) {
-          this.lastSlot = r.value.slot;
-          this.lastSig = r.value.signature ?? null;
+        if (value.slot > this.lastSlot) {
+          this.lastSlot = value.slot;
+          this.lastSig = value.signature ?? null;
           this.lastTs = new Date();
         }
-        this.onLogs(r.value);
+        this.onLogs(value);
       }
       return;
     }

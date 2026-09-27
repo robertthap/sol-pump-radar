@@ -95,14 +95,17 @@ export function SessionWalletBalance({
   if (variant === "compact") {
     return (
       <div
-        className={`card flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs ${className}`}
+        className={`card flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-xs ${className}`}
       >
         <div className="min-w-0">
-          <p className="text-[10px] uppercase tracking-wide text-muted">{label}</p>
+          <p className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted">
+            Portfolio balance
+            <span className="pill text-[9px]">{isDemo ? "Demo" : "Real"}</span>
+          </p>
           {equity != null ? (
-            <p className="font-mono text-base font-semibold text-fg">
+            <p className="mt-0.5 font-mono text-xl font-semibold tracking-tight text-fg">
               {equity.toFixed(3)} <span className="text-sm font-normal text-muted">SOL</span>
-              <span className="ml-2 text-[11px] text-muted">{solToAudDisplay(equity, solAud)}</span>
+              <span className="ml-2 text-xs font-normal text-muted">{solToAudDisplay(equity, solAud)}</span>
             </p>
           ) : (
             <p className="text-muted">
@@ -111,9 +114,16 @@ export function SessionWalletBalance({
           )}
         </div>
         {isDemo && demo && (
-          <p className="text-[10px] text-muted">
-            cash {demo.balanceSol.toFixed(3)} · locked {demo.lockedSol.toFixed(3)}
-          </p>
+          <dl className="grid grid-cols-2 gap-2 text-right">
+            <div className="card-2 min-w-24 px-3 py-2">
+              <dt className="text-[9px] uppercase tracking-wide text-muted">Available</dt>
+              <dd className="mt-0.5 font-mono font-semibold tabular-nums text-fg">{demo.balanceSol.toFixed(3)} SOL</dd>
+            </div>
+            <div className="card-2 min-w-24 px-3 py-2">
+              <dt className="text-[9px] uppercase tracking-wide text-muted">In positions</dt>
+              <dd className="mt-0.5 font-mono font-semibold tabular-nums text-fg">{demo.lockedSol.toFixed(3)} SOL</dd>
+            </div>
+          </dl>
         )}
       </div>
     );

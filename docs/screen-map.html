@@ -1,0 +1,1086 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pump Radar Screen Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root {
+  --paper: #F1F4F2;
+  --surface: #FFFFFF;
+  --ink: #12171A;
+  --muted: #58626A;
+  --rule: #D3DAD6;
+  --accent: #0A8A5C;
+  --accent-soft: rgba(10, 138, 92, 0.10);
+  --seg-on-bg: #12171A;
+  --seg-on-ink: #F1F4F2;
+
+  /* The app is dark-only: frames always paint in its real tokens (tailwind.config.ts). */
+  --s-bg: #0B0D10;
+  --s-panel: #14161C;
+  --s-panel2: #1C1E26;
+  --s-border: #262932;
+  --s-muted: #8F94A0;
+  --s-fg: #E9ECF2;
+  --s-accent: #16C784;
+  --s-ok: #22C55E;
+  --s-warn: #EAB308;
+  --s-bad: #F45454;
+
+  --f-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #151A1C;
+    --surface: #1B2124;
+    --ink: #E3E8E6;
+    --muted: #919BA2;
+    --rule: #2C3337;
+    --accent: #34D69B;
+    --accent-soft: rgba(52, 214, 155, 0.12);
+    --seg-on-bg: #E3E8E6;
+    --seg-on-ink: #151A1C;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #151A1C;
+  --surface: #1B2124;
+  --ink: #E3E8E6;
+  --muted: #919BA2;
+  --rule: #2C3337;
+  --accent: #34D69B;
+  --accent-soft: rgba(52, 214, 155, 0.12);
+  --seg-on-bg: #E3E8E6;
+  --seg-on-ink: #151A1C;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-sans);
+  font-size: 15px;
+  line-height: 1.55;
+}
+code, .mono { font-family: var(--f-mono); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- document ---------- */
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 24px; padding-block: 48px 96px; }
+@media (max-width: 600px) { .wrap { padding-inline: 16px; padding-block: 32px 72px; } }
+
+.eyebrow { font-family: var(--f-mono); font-size: 12px; color: var(--muted); margin: 0 0 12px; letter-spacing: 0.02em; }
+h1.title {
+  margin: 0;
+  font-stretch: 72%;
+  font-weight: 750;
+  font-size: clamp(38px, 6vw, 60px);
+  line-height: 0.98;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.lede { max-width: 64ch; margin: 16px 0 0; font-size: 16.5px; color: var(--ink); }
+.lede code { font-size: 0.9em; background: var(--accent-soft); padding: 0 4px; border-radius: 3px; }
+
+.index { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 32px; border-top: 2px solid var(--ink); }
+.index a { display: grid; gap: 2px; padding: 12px 16px 14px 0; text-decoration: none; border-bottom: 1px solid var(--rule); }
+.index a + a { padding-left: 16px; border-left: 1px solid var(--rule); }
+.index .r { font-family: var(--f-mono); font-weight: 600; font-size: 18px; }
+.index .c { font-size: 13px; color: var(--muted); }
+.index a:hover .r { color: var(--accent); }
+@media (max-width: 760px) {
+  .index { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .index a:nth-child(odd) { padding-left: 0; border-left: 0; }
+}
+
+.toolbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  margin: 28px -24px 0; padding: 10px 24px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+}
+@media (max-width: 600px) { .toolbar { margin-inline: -16px; padding-inline: 16px; } }
+.tb-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; padding: 2px; margin: 0; background: var(--surface); }
+.seg legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label { padding: 5px 12px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--muted); }
+.seg input:checked + label { background: var(--seg-on-bg); color: var(--seg-on-ink); }
+.seg input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tb-note { font-size: 12.5px; color: var(--muted); margin-left: auto; }
+@media (max-width: 760px) { .tb-note { margin-left: 0; flex-basis: 100%; } }
+
+.page { margin-top: 76px; scroll-margin-top: 72px; }
+.page-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; }
+.page-head .route { font-family: var(--f-mono); font-weight: 600; font-size: 28px; letter-spacing: -0.02em; }
+.page-head .pname { font-stretch: 78%; font-weight: 700; font-size: 28px; color: var(--muted); }
+.page-meta { font-family: var(--f-mono); font-size: 12px; color: var(--muted); margin: 6px 0 0; overflow-wrap: anywhere; }
+.page-sum { max-width: 66ch; margin: 12px 0 22px; }
+
+.frame-scroll { overflow-x: auto; padding-top: 10px; padding-bottom: 6px; }
+.frame-scroll::-webkit-scrollbar { height: 8px; }
+
+.regions { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px 32px; margin: 26px 0 0; }
+.regions > div { border-top: 1px solid var(--rule); padding-top: 10px; }
+.regions dt { font-family: var(--f-mono); font-weight: 600; font-size: 13.5px; }
+.regions dt small { display: block; font-weight: 400; font-size: 11.5px; color: var(--muted); margin-top: 1px; overflow-wrap: anywhere; }
+.regions dd { margin: 6px 0 0; font-size: 14px; line-height: 1.5; }
+
+.tree-box { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; overflow-x: auto; }
+.tree { margin: 0; padding: 18px 20px; font-family: var(--f-mono); font-size: 12.5px; line-height: 1.75; color: var(--ink); }
+.tree .n { color: var(--muted); }
+.tree .k { color: var(--accent); font-weight: 600; }
+
+/* ---------- state toggles ---------- */
+.doc[data-mode="demo"] .if-real,
+.doc[data-mode="real"] .if-demo,
+.doc[data-bot="stopped"] .if-running,
+.doc[data-bot="running"] .if-stopped { display: none !important; }
+
+/* ---------- app screen wireframes ---------- */
+.screen {
+  background: var(--s-bg);
+  color: var(--s-fg);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: var(--f-sans);
+  font-size: 12px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+.screen.desktop { min-width: 900px; }
+.url {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px;
+  background: #06080A;
+  border-bottom: 1px solid var(--s-border);
+  font: 500 11px/1.2 var(--f-mono);
+  color: var(--s-muted);
+}
+.url b { color: var(--s-fg); font-weight: 500; }
+.url span { margin-left: auto; }
+
+.rel { position: relative; }
+.tag {
+  position: absolute; top: -9px; left: 10px; z-index: 3;
+  background: #FFFFFF; color: #0B0D10;
+  font: 600 10px/1 var(--f-mono);
+  padding: 3px 6px 4px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.tag.r { left: auto; right: 10px; }
+.tag.b { top: auto; bottom: -9px; }
+.tag.mid { top: 50%; transform: translateY(-50%); left: auto; right: 12px; }
+.tag.dashed { background: #0B0D10; color: #FFFFFF; box-shadow: 0 0 0 1px #FFFFFF; }
+
+.up { color: var(--s-ok); }
+.down { color: var(--s-bad); }
+.mut { color: var(--s-muted); }
+.wrn { color: var(--s-warn); }
+.acc { color: var(--s-accent); }
+.fw6 { font-weight: 600; }
+
+.w-banner { padding: 6px 12px; text-align: center; font-size: 11.5px; border-bottom: 1px solid; }
+.w-banner b { letter-spacing: 0.04em; margin-right: 10px; }
+.w-banner.demo { background: #0A3328; color: #ECFDF5; border-color: #06694D; }
+.w-banner.real { background: #3A2A0E; color: #FFFBEB; border-color: #9A5B0C; }
+
+.w-nav { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: #13151B; border-bottom: 1px solid var(--s-border); }
+.w-logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; letter-spacing: -0.01em; white-space: nowrap; }
+.w-logo i { width: 22px; height: 22px; border-radius: 6px; background: var(--s-accent); color: #000; font-style: normal; display: grid; place-items: center; font-size: 11px; font-weight: 800; }
+.w-logo em { font-style: normal; color: var(--s-accent); }
+.w-tabs { display: flex; gap: 2px; margin-left: 6px; }
+.w-tab { padding: 6px 10px; border-radius: 6px; color: var(--s-muted); }
+.w-tab.on { color: var(--s-fg); background: var(--s-panel2); box-shadow: inset 0 -2px 0 var(--s-accent); }
+.w-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.on { background: var(--s-ok); }
+.dot.off { border: 1px solid var(--s-muted); }
+.botstate { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+.w-pill { padding: 3px 7px; border-radius: 6px; font-weight: 600; font-size: 11px; }
+.w-pill.demo { background: rgba(22, 199, 132, 0.15); color: var(--s-accent); }
+.w-pill.real { background: rgba(234, 179, 8, 0.15); color: var(--s-warn); }
+.help { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--s-muted); color: var(--s-muted); display: grid; place-items: center; font-size: 10px; font-weight: 700; }
+.w-btn { display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--s-border); color: var(--s-muted); font-size: 11px; white-space: nowrap; }
+.w-btn.danger { color: var(--s-bad); border-color: rgba(244, 84, 84, 0.4); }
+.w-btn.ok { color: var(--s-ok); border-color: rgba(34, 197, 94, 0.4); }
+.w-btn.acc { color: var(--s-accent); }
+.w-btn.brand { background: var(--s-accent); color: #04130D; border-color: transparent; font-weight: 600; justify-content: center; }
+.w-btn.stop { background: rgba(244, 84, 84, 0.16); color: #FFB0B0; border-color: rgba(244, 84, 84, 0.5); font-weight: 600; justify-content: center; }
+.w-btn.full { width: 100%; padding-block: 8px; }
+.hamb { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; color: var(--s-muted); font-size: 15px; }
+.halt-pair { display: inline-flex; gap: 6px; }
+
+.w-main { padding: 20px 20px 24px; display: grid; gap: 18px; }
+.w-main.narrow { max-width: 900px; }
+.w-card { position: relative; background: var(--s-panel); border: 1px solid var(--s-border); border-radius: 10px; padding: 12px 14px; }
+.w-card.flush { padding: 0; }
+.w-h { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--s-muted); margin: 0; }
+.placeholder { border: 1px dashed #3A3E4A; border-radius: 10px; height: 120px; display: grid; place-items: center; color: var(--s-muted); font: 11px var(--f-mono); text-align: center; padding: 10px; }
+
+/* hero */
+.hero::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--s-ok); border-radius: 10px 10px 0 0; }
+.hero { background: radial-gradient(ellipse at left top, rgba(34, 197, 94, 0.10), transparent 60%), var(--s-panel); }
+.row-sb { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; background: rgba(34, 197, 94, 0.14); color: var(--s-ok); font-weight: 600; font-size: 10.5px; }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 18px; margin-top: 10px; }
+.big { font-size: 38px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
+.kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 14px; margin: 10px 0 0; font-size: 11px; }
+.kv dt { color: var(--s-muted); }
+.kv dd { margin: 0; font-weight: 500; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 10px 0 0; }
+.tile { background: var(--s-panel2); border: 1px solid var(--s-border); border-radius: 8px; padding: 6px 8px; }
+.tile dt { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--s-muted); }
+.tile dd { margin: 2px 0 0; font-weight: 600; }
+.chips { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 10px; margin-bottom: 4px; }
+.chip { font-family: var(--f-mono); font-size: 10px; padding: 3px 8px; border: 1px solid var(--s-border); border-radius: 5px; background: var(--s-panel2); color: var(--s-muted); }
+.chip.on { border-color: rgba(22, 199, 132, 0.6); color: var(--s-accent); }
+.spark svg { display: block; width: 100%; height: 118px; }
+
+/* trade grid */
+.trade-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 18px; align-items: start; }
+.pl-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--s-border); }
+.pl-tabs { display: flex; gap: 2px; }
+.cnt { font-family: var(--f-mono); font-size: 10px; padding: 0 5px; margin-left: 4px; border-radius: 4px; background: var(--s-panel2); }
+.pos { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--s-border); border-left: 2px solid transparent; }
+.pos.ue { border-left-color: rgba(34, 197, 94, 0.6); }
+.pos.de { border-left-color: rgba(244, 84, 84, 0.6); }
+.pos .chev { color: var(--s-muted); width: 10px; flex: none; font-size: 10px; }
+.pos .name { flex: 1; min-width: 0; }
+.pos .name b { font-weight: 600; }
+.pos .name small { color: var(--s-muted); margin-left: 6px; font-size: 10.5px; }
+.pos .sub { display: block; font-size: 10.5px; color: var(--s-muted); margin-top: 1px; }
+.pos .pnl { text-align: right; }
+.pos .pnl b { display: block; font-weight: 600; }
+.pos .pnl span { font-size: 10.5px; }
+.sell { padding: 6px 12px; border-radius: 7px; background: rgba(244, 84, 84, 0.14); color: #FF9D9D; border: 1px solid rgba(244, 84, 84, 0.4); font-size: 11px; font-weight: 600; flex: none; }
+.pos-detail { position: relative; background: rgba(0, 0, 0, 0.25); padding: 8px 12px 10px 32px; border-bottom: 1px solid var(--s-border); border-left: 2px solid rgba(34, 197, 94, 0.6); }
+.fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px 14px; font-size: 10.5px; margin: 0; }
+.fields dt { color: var(--s-muted); }
+.fields dd { margin: 0 0 3px; font-weight: 500; }
+.pos-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+.field { display: grid; gap: 3px; margin-bottom: 9px; }
+.field .lbl { font-size: 10.5px; color: var(--s-muted); }
+.input { border: 1px solid var(--s-border); background: var(--s-bg); border-radius: 6px; padding: 6px 8px; display: flex; justify-content: space-between; }
+.hint { font-size: 10px; color: var(--s-muted); }
+.ro { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; font-size: 10.5px; margin: 0; }
+.ro dt { color: var(--s-muted); }
+.ro dd { margin: 0; font-weight: 500; }
+.slots { border: 1px solid var(--s-border); background: rgba(0, 0, 0, 0.25); border-radius: 6px; padding: 7px 9px; margin-top: 10px; font-size: 10.5px; }
+.bar { height: 5px; background: var(--s-panel2); border-radius: 3px; margin: 5px 0; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 40%; background: var(--s-accent); border-radius: 3px; }
+
+.log-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 7px 12px; border-bottom: 1px solid var(--s-border); font-size: 11px; }
+.log-row:last-child { border-bottom: 0; }
+.log-row time { font-family: var(--f-mono); color: var(--s-muted); font-size: 10.5px; }
+.kind { font-family: var(--f-mono); font-size: 9.5px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--s-border); background: var(--s-panel2); }
+.kind.o { color: var(--s-accent); border-color: rgba(22, 199, 132, 0.4); }
+.kind.t { color: var(--s-ok); border-color: rgba(34, 197, 94, 0.4); }
+.kind.s { color: var(--s-warn); }
+.ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* landing */
+.landing {
+  padding: 44px 24px 36px;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  background: radial-gradient(60% 50% at 50% 0%, rgba(22, 199, 132, 0.10), transparent 70%), var(--s-bg);
+}
+.l-brand { display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 20px; }
+.l-brand i { width: 32px; height: 32px; border-radius: 10px; background: var(--s-accent); color: #000; display: grid; place-items: center; font-style: normal; font-size: 15px; font-weight: 800; }
+.l-brand em { font-style: normal; color: var(--s-accent); }
+.l-h1 { font-size: 23px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.l-sub { color: var(--s-muted); max-width: 400px; margin: 6px 0 0; font-size: 12px; }
+.l-session { position: relative; margin-top: 18px; max-width: 400px; width: 100%; border: 1px solid var(--s-border); background: rgba(20, 22, 28, 0.8); border-radius: 12px; padding: 12px 14px; font-size: 11px; display: grid; gap: 8px; justify-items: center; }
+.l-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; width: 100%; max-width: 580px; margin-top: 26px; text-align: left; }
+.l-card { position: relative; background: var(--s-panel); border: 1px solid var(--s-border); border-radius: 16px; padding: 16px; display: grid; gap: 7px; justify-items: start; align-content: start; }
+.l-card.demo { border-color: rgba(22, 199, 132, 0.35); }
+.l-card h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.l-card p { margin: 0; font-size: 11px; color: var(--s-muted); }
+.l-ico { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; }
+.l-ico svg { width: 16px; height: 16px; }
+.l-ico.demo { background: rgba(22, 199, 132, 0.15); color: var(--s-accent); }
+.l-ico.real { background: rgba(234, 179, 8, 0.15); color: var(--s-warn); }
+.l-go { font-size: 12px; font-weight: 500; margin-top: 2px; }
+.l-foot { margin-top: 24px; font-size: 10px; color: var(--s-muted); }
+
+/* wallet */
+.wh { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.wh h5 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.bal { font-family: var(--f-mono); font-size: 30px; font-weight: 600; letter-spacing: -0.02em; margin-top: 2px; }
+.bal small { font-family: var(--f-sans); font-size: 14px; font-weight: 400; color: var(--s-muted); margin-left: 6px; }
+.wp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: flex-end; font-size: 11px; }
+.wp .p { padding: 2px 7px; border-radius: 999px; background: var(--s-panel2); font-family: var(--f-mono); font-size: 10.5px; }
+.status4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 16px; margin: 8px 0 0; font-size: 12px; }
+.status4 dt { font-size: 10.5px; color: var(--s-muted); }
+.status4 dd { margin: 0; font-weight: 500; }
+.warnbox { display: flex; gap: 8px; border: 1px solid rgba(234, 179, 8, 0.3); background: rgba(234, 179, 8, 0.05); border-radius: 8px; padding: 8px 10px; color: var(--s-muted); font-size: 10.5px; margin: 8px 0 10px; }
+.warnbox b { color: var(--s-warn); }
+.textarea { border: 1px solid var(--s-border); background: var(--s-bg); border-radius: 8px; padding: 8px 10px; height: 48px; font-family: var(--f-mono); font-size: 10.5px; color: var(--s-muted); }
+.addrow { display: flex; align-items: center; gap: 8px; margin: 8px 0 10px; font-size: 11px; }
+.wl { display: grid; gap: 4px; }
+.wl-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--s-border); background: var(--s-bg); border-radius: 8px; padding: 7px 10px; font-size: 11px; }
+.wl-row > div { flex: 1; min-width: 0; }
+.wl-row code { font-size: 11px; margin-right: 6px; }
+.badge { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 3px; }
+.badge.ok { background: rgba(34, 197, 94, 0.15); color: var(--s-ok); }
+.badge.warn { background: rgba(234, 179, 8, 0.15); color: var(--s-warn); }
+.trash { width: 22px; height: 22px; display: grid; place-items: center; color: var(--s-muted); flex: none; }
+.trash svg { width: 12px; height: 12px; }
+.backlink { font-size: 12px; color: var(--s-muted); margin: 0; }
+
+/* phones */
+.phones { display: flex; flex-wrap: wrap; gap: 28px 24px; }
+.phone-wrap { width: 236px; display: grid; gap: 10px; align-content: start; }
+.phone { background: var(--s-bg); color: var(--s-fg); border: 1px solid var(--rule); border-radius: 24px; padding: 12px 8px 16px; font-size: 10.5px; line-height: 1.35; min-height: 440px; font-variant-numeric: tabular-nums; }
+.ph-cap { font-size: 13px; }
+.ph-cap code { font-weight: 600; }
+.ph-cap span { display: block; color: var(--muted); font-size: 12.5px; }
+.p-banner { font-size: 9px; text-align: center; padding: 4px; border-radius: 6px 6px 0 0; }
+.p-banner.demo { background: #0A3328; color: #ECFDF5; }
+.p-banner.real { background: #3A2A0E; color: #FFFBEB; }
+.p-nav { display: flex; align-items: center; gap: 5px; padding: 6px; background: #13151B; border-bottom: 1px solid var(--s-border); }
+.p-nav .w-logo i { width: 18px; height: 18px; font-size: 9px; border-radius: 5px; }
+.p-nav .w-tab { padding: 3px 5px; font-size: 10px; }
+.p-nav .w-pill { font-size: 9px; padding: 2px 5px; }
+.p-nav .hamb { width: 20px; height: 20px; font-size: 12px; margin-left: auto; }
+.p-drawer { background: var(--s-panel2); border-bottom: 1px solid var(--s-border); padding: 8px; display: grid; gap: 6px; }
+.p-drawer .w-btn { font-size: 9.5px; padding: 4px 7px; }
+.blk { background: var(--s-panel); border: 1px solid var(--s-border); border-radius: 8px; padding: 7px 8px; margin-top: 6px; }
+.blk b { font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; color: var(--s-fg); display: block; }
+.blk span { display: block; color: var(--s-muted); font-size: 9.5px; margin-top: 2px; }
+.blk.tall { min-height: 90px; }
+.blk.hi { border-color: rgba(22, 199, 132, 0.45); }
+.pl-cards { display: grid; gap: 6px; margin-top: 10px; }
+.pl-cards .blk { margin: 0; }
+.p-center { text-align: center; padding: 16px 6px 0; }
+.p-center .l-brand { font-size: 14px; margin-bottom: 10px; justify-content: center; }
+.p-center .l-brand i { width: 22px; height: 22px; font-size: 10px; border-radius: 6px; }
+
+/* overlays */
+.overlays { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 26px 24px; }
+.ov figure { margin: 0; display: grid; gap: 10px; }
+.ov figcaption { font-size: 14px; }
+.ov figcaption code { font-weight: 600; font-size: 13px; }
+.ov figcaption small { display: block; color: var(--muted); font-family: var(--f-mono); font-size: 11.5px; }
+.mini { position: relative; height: 270px; }
+.mini .ghost { padding: 12px; display: grid; gap: 8px; }
+.mini .ghost div { height: 36px; border-radius: 8px; background: var(--s-panel); border: 1px solid var(--s-border); }
+.mini .ghost div:nth-child(2) { height: 80px; }
+.dim { position: absolute; inset: 0; background: rgba(11, 13, 16, 0.6); backdrop-filter: blur(2px); display: grid; place-items: center; padding: 14px; }
+.modal { background: var(--s-panel); border: 1px solid var(--s-border); border-radius: 10px; padding: 14px; width: 100%; max-width: 270px; box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.7); font-size: 11px; }
+.modal h6 { margin: 0 0 6px; font-size: 13.5px; font-weight: 600; }
+.modal p { margin: 0 0 8px; color: var(--s-muted); font-size: 10.5px; }
+.modal ul { list-style: none; padding: 0; margin: 0 0 8px; font-size: 10.5px; color: var(--s-muted); display: grid; gap: 2px; }
+.modal .ack { display: flex; gap: 6px; align-items: flex-start; font-size: 10.5px; margin-bottom: 10px; }
+.modal .ack i { width: 11px; height: 11px; border: 1px solid var(--s-muted); border-radius: 2px; flex: none; margin-top: 2px; }
+.btnrow { display: flex; gap: 6px; }
+.btnrow .w-btn { flex: 1; justify-content: center; }
+.w-btn.disabled { opacity: 0.4; }
+.pop { position: absolute; top: 58px; right: 14px; width: 230px; background: var(--s-panel); border: 1px solid var(--s-border); border-radius: 8px; padding: 10px; font-size: 10.5px; box-shadow: 0 12px 28px -10px rgba(0, 0, 0, 0.7); }
+.pop p { margin: 0 0 6px; color: var(--s-muted); }
+.pop b { color: var(--s-fg); }
+.pop .lab { border-radius: 3px; padding: 0 4px; font-weight: 600; }
+.loadings { display: grid; gap: 10px; padding: 12px; }
+.skel { background: var(--s-panel2); border-radius: 6px; height: 12px; }
+.spin { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--s-border); border-top-color: var(--s-accent); margin: 8px auto; }
+@media (prefers-reduced-motion: no-preference) {
+  .spin { animation: spin 1s linear infinite; }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 50% { opacity: 0.45; } }
+
+.section-sum { max-width: 66ch; margin: 12px 0 24px; }
+.foot { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="doc" data-mode="demo" data-bot="stopped">
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">sol-pump-radar · Next.js App Router · app/ + components/</p>
+  <h1 class="title">Pump Radar screen map</h1>
+  <p class="lede">
+    The frontend has three routes. <code>/</code> is the wallet chooser and has no chrome of its own. <code>/trade</code> and
+    <code>/wallet</code> both sit inside one shell: a mode banner on top, then the tab bar. Every page is drawn below
+    with the component behind each area labelled.
+  </p>
+
+  <nav class="index" aria-label="Screens">
+    <a href="#shell"><span class="r">shell</span><span class="c">PortalLayout · banner + nav</span></a>
+    <a href="#home"><span class="r">/</span><span class="c">LandingPage · no shell</span></a>
+    <a href="#trade"><span class="r">/trade</span><span class="c">TradePage · shell + ticker</span></a>
+    <a href="#wallet"><span class="r">/wallet</span><span class="c">WalletPage · shell</span></a>
+  </nav>
+</header>
+
+  <div class="toolbar">
+    <span class="tb-label">Preview as</span>
+    <fieldset class="seg">
+      <legend>Session</legend>
+      <input type="radio" name="mode" id="mode-demo" value="demo" checked><label for="mode-demo">Demo</label>
+      <input type="radio" name="mode" id="mode-real" value="real"><label for="mode-real">Real</label>
+    </fieldset>
+    <fieldset class="seg">
+      <legend>Bot</legend>
+      <input type="radio" name="bot" id="bot-stopped" value="stopped" checked><label for="bot-stopped">Bot stopped</label>
+      <input type="radio" name="bot" id="bot-running" value="running"><label for="bot-running">Bot running</label>
+    </fieldset>
+    <span class="tb-note">Tickers, balances and P&amp;L in the frames are sample values.</span>
+  </div>
+
+<!-- shared shell template, cloned into each framed page -->
+<template id="shell-tpl">
+  <div class="w-banner demo if-demo rel"><b>DEMO - PLAY MONEY</b>Simulated fills only. No real SOL at risk.<span class="tag mid">ModeBanner</span></div>
+  <div class="w-banner real if-real rel"><b>REAL WALLET</b>Wallet connected - live orders are in dry-run (not sent).<span class="tag mid">ModeBanner</span></div>
+  <div class="w-nav rel">
+    <span class="w-logo"><i>P</i>Sol Pump <em>Radar</em></span>
+    <span class="w-tabs"><span class="w-tab" data-tab="trade">Trade</span><span class="w-tab" data-tab="wallet">Wallet</span></span>
+    <span class="w-right">
+      <span class="botstate up if-running"><span class="dot on"></span>Bot running</span>
+      <span class="botstate mut if-stopped"><span class="dot off"></span>Bot stopped</span>
+      <span class="w-pill demo if-demo">Demo</span>
+      <span class="w-pill real if-real">Real</span>
+      <span class="help rel">?<span class="tag b" style="left:-24px">ModeGlossary</span></span>
+      <span class="halt-pair rel"><span class="w-btn danger">Pause trading</span><span class="w-btn ok">Resume trading</span><span class="tag b r">HaltButton</span></span>
+      <span class="w-btn if-demo">↺ Reset</span>
+      <span class="w-btn">⇥ Log off</span>
+    </span>
+    <span class="tag b">TopNav</span>
+  </div>
+</template>
+
+<!-- ============ SHELL ============ -->
+<section class="page" id="shell" aria-labelledby="shell-h">
+  <h2 class="page-head" id="shell-h"><span class="route">shell</span><span class="pname">Shared frame</span></h2>
+  <p class="page-meta">app/providers.tsx → components/layout/AppChrome.tsx → components/layout/PortalLayout.tsx</p>
+  <p class="page-sum">
+    <code>AppChrome</code> checks the path. <code>/</code> renders bare. Everything else goes into <code>PortalLayout</code>:
+    the banner, then a sticky 56px nav, then a padded <code>&lt;main&gt;</code>. Each page centres its own content at up to 1200px
+    (<code>.app-page</code>).
+  </p>
+
+  <div class="frame-scroll">
+    <div class="screen desktop">
+      <div class="url"><b>localhost:3000</b>/trade · /wallet<span>desktop ≥ md</span></div>
+      <div data-shell="trade"></div>
+      <div class="w-main">
+        <div class="placeholder">page content — &lt;main class="app-page"&gt; · max-width 1200px · centred</div>
+      </div>
+    </div>
+  </div>
+
+  <dl class="regions">
+    <div>
+      <dt>ModeBanner<small>components/runtime/ModeBanner.tsx</small></dt>
+      <dd>Full-width strip above the nav. Green for demo, amber for a real wallet, red "REAL WALLET - LIVE TRADING" once live execution is on without dry run, grey when no wallet is picked. Adds "Trading paused" when the breaker has halted. It makes no requests of its own.</dd>
+    </div>
+    <div>
+      <dt>TopNav<small>components/layout/TopNav.tsx</small></dt>
+      <dd>Logo (links to Trade), Trade and Wallet tabs, then the bot's state, the Demo/Real pill, the glossary, pause/resume, Reset (demo only) and Log off. Below <code>md</code>, the glossary, halt and session buttons move into a ☰ drawer.</dd>
+    </div>
+    <div>
+      <dt>HaltButton<small>components/HaltButton.tsx</small></dt>
+      <dd>"Pause trading" and "Resume trading". Each queues a halt or resume command and then reloads the page.</dd>
+    </div>
+    <div>
+      <dt>ModeGlossary<small>components/ModeGlossary.tsx</small></dt>
+      <dd>A "?" that opens a 288px popover explaining Demo vs Real. Closes on an outside click or Esc.</dd>
+    </div>
+  </dl>
+</section>
+
+<!-- ============ HOME ============ -->
+<section class="page" id="home" aria-labelledby="home-h">
+  <h2 class="page-head" id="home-h"><span class="route">/</span><span class="pname">Wallet chooser</span></h2>
+  <p class="page-meta">app/page.tsx → components/LandingPage.tsx · no shell</p>
+  <p class="page-sum">
+    One centred column (max 768px), vertically centred on the viewport under a soft green glow. There's no banner or nav.
+    Choosing a wallet sets the trading mode and goes straight to <code>/trade</code>.
+  </p>
+
+  <div class="frame-scroll">
+    <div class="screen desktop">
+      <div class="url"><b>localhost:3000</b>/<span>desktop</span></div>
+      <div class="landing rel">
+        <span class="tag" style="top:10px">LandingPage</span>
+        <div class="l-brand"><i>P</i><span>Pump<em>Radar</em></span></div>
+        <p class="l-h1">Choose a wallet to start trading</p>
+        <p class="l-sub">A local pump.fun auto-trading terminal. Practice risk-free with a demo wallet, or connect a real wallet when you're ready.</p>
+
+        <div class="l-session">
+          <span class="tag dashed">only with an active session</span>
+          <span class="mut">You have an active <b class="acc">demo</b> session. Continue trading or log off to pick a different wallet.</span>
+          <span style="display:flex;gap:6px"><span class="w-btn acc" style="border-color:rgba(22,199,132,.4)">Continue session</span><span class="w-btn">Log off</span></span>
+        </div>
+
+        <div class="l-cards">
+          <div class="l-card demo">
+            <span class="l-ico demo"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z" fill="currentColor"/></svg></span>
+            <h4>Demo wallet</h4>
+            <p>Play money, simulated fills. Safe to experiment — no crypto at risk. Starts with 10 SOL.</p>
+            <span class="l-go acc">Start in demo →</span>
+          </div>
+          <div class="l-card">
+            <span class="l-ico real"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="4" width="12" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9.5" y="7.2" width="4.5" height="2.8" rx="1" fill="currentColor"/></svg></span>
+            <h4>Real wallet</h4>
+            <p>Your connected wallet trades on-chain. Live orders fire only when the runtime profile and caps allow. Confirmation required.</p>
+            <span class="l-go wrn">Connect real wallet →</span>
+            <span class="tag b r">opens RealModeGate</span>
+          </div>
+        </div>
+        <p class="l-foot">Runs locally. Not financial advice — high risk of total loss. Personal research tool only.</p>
+      </div>
+    </div>
+  </div>
+
+  <dl class="regions">
+    <div>
+      <dt>LandingPage<small>components/LandingPage.tsx</small></dt>
+      <dd>Brand, headline, one-line pitch, two wallet cards, disclaimer. Anything that depends on the mode waits until the page mounts, because the mode is restored from localStorage.</dd>
+    </div>
+    <div>
+      <dt>Active-session notice<small>inside LandingPage</small></dt>
+      <dd>Shown only if a demo or real session is already open. "Continue session" goes to <code>/trade</code>; "Log off" ends the session and stays here.</dd>
+    </div>
+    <div>
+      <dt>Wallet cards<small>inside LandingPage</small></dt>
+      <dd>Two columns from <code>sm</code> up, stacked below that. Demo enters directly. Real opens the RealModeGate modal first (see Overlays).</dd>
+    </div>
+  </dl>
+</section>
+
+<!-- ============ TRADE ============ -->
+<section class="page" id="trade" aria-labelledby="trade-h">
+  <h2 class="page-head" id="trade-h"><span class="route">/trade</span><span class="pname">Trading terminal</span></h2>
+  <p class="page-meta">app/trade/page.tsx · shell: PortalLayout · data: TickerProvider → one poll of /api/ticker</p>
+  <p class="page-sum">
+    Four regions, one data source. The hero spans the full width. Below it, positions take the flexible column and the bot panel
+    a fixed 320px column. The live log spans the bottom. On phones, CSS order moves the bot panel above positions.
+  </p>
+
+  <div class="frame-scroll">
+    <div class="screen desktop">
+      <div class="url"><b>localhost:3000</b>/trade<span>desktop ≥ md</span></div>
+      <div data-shell="trade" data-notags></div>
+      <div class="w-main">
+
+        <!-- PnlHero -->
+        <section class="w-card hero">
+          <span class="tag">PnlHero</span>
+          <div class="row-sb">
+            <p class="w-h">Total P&amp;L</p>
+            <span style="display:flex;gap:8px;align-items:center;font-size:10.5px"><span class="status-pill"><span class="dot on pulse"></span>LIVE</span><span class="mut">Updated 1s ago</span></span>
+          </div>
+          <div class="hero-grid">
+            <div>
+              <div class="big up">+0.4213 SOL</div>
+              <div class="mut" style="margin-top:4px">+A$96.07</div>
+              <dl class="kv">
+                <div><dt>Open</dt><dd class="up">▲ +0.1180 SOL (+4.2%)</dd></div>
+                <div><dt>Realized (this session)</dt><dd class="up">+0.3033 SOL</dd></div>
+              </dl>
+              <dl class="tiles">
+                <div class="tile"><dt>Invested</dt><dd>2.800 SOL</dd></div>
+                <div class="tile"><dt>Value</dt><dd>2.918 SOL</dd></div>
+                <div class="tile"><dt>Available</dt><dd>7.503 SOL</dd></div>
+              </dl>
+            </div>
+            <div class="rel">
+              <div class="chips">
+                <span style="display:flex;gap:4px"><span class="chip on">Portfolio</span></span>
+                <span class="mut">Portfolio P&amp;L · Live · this session · last 10 min</span>
+              </div>
+              <div class="spark">
+                <svg viewBox="0 0 306 118" preserveAspectRatio="none" role="img" aria-label="Sample P&amp;L sparkline">
+                  <line x1="0" y1="84" x2="306" y2="84" stroke="#262932" stroke-width="1" stroke-dasharray="3 3"/>
+                  <path d="M0 92 L15 88 L30 90 L45 82 L60 84 L75 76 L90 79 L105 70 L120 66 L135 72 L150 62 L165 57 L180 61 L195 52 L210 45 L225 50 L240 42 L255 36 L270 39 L285 31 L300 27 L300 118 L0 118 Z" fill="rgba(34,197,94,0.14)"/>
+                  <path d="M0 92 L15 88 L30 90 L45 82 L60 84 L75 76 L90 79 L105 70 L120 66 L135 72 L150 62 L165 57 L180 61 L195 52 L210 45 L225 50 L240 42 L255 36 L270 39 L285 31 L300 27" fill="none" stroke="#22C55E" stroke-width="1.8" vector-effect="non-scaling-stroke"/>
+                  <circle cx="300" cy="27" r="3" fill="#22C55E"/>
+                </svg>
+              </div>
+              <span class="tag b r">PnlSparkline</span>
+            </div>
+          </div>
+        </section>
+
+        <div class="trade-grid">
+          <!-- PositionList -->
+          <section class="w-card flush">
+            <span class="tag">PositionList</span>
+            <div class="pl-head">
+              <span class="pl-tabs"><span class="w-tab on">Open<span class="cnt acc">4</span></span><span class="w-tab">Closed<span class="cnt">9</span></span></span>
+              <span class="sell">Sell all (4)</span>
+            </div>
+            <div class="pos ue">
+              <span class="chev">▲</span>
+              <span class="name"><b>GIGA</b><small>0.100 SOL</small><span class="sub">MC $6.2K → $8.9K · 3m</span></span>
+              <span class="pnl up"><b>▲ +0.0312</b><span>+31.2%</span></span>
+              <span class="sell">Sell</span>
+            </div>
+            <div class="pos-detail">
+              <span class="tag" style="left:32px">PositionRow · expanded</span>
+              <dl class="fields">
+                <div><dt>Entry price</dt><dd>31.40 vSOL</dd></div>
+                <div><dt>Current price</dt><dd>41.20 vSOL</dd></div>
+                <div><dt>Entry market cap</dt><dd>$6.2K</dd></div>
+                <div><dt>Current market cap</dt><dd>$8.9K</dd></div>
+                <div><dt>Position size</dt><dd>0.100 SOL</dd></div>
+                <div><dt>P&amp;L</dt><dd class="up">+0.0312 SOL (+31.2%)</dd></div>
+                <div><dt>Age</dt><dd>3m</dd></div>
+                <div><dt>Take-profit / stop-loss</dt><dd>+40% / -20%</dd></div>
+                <div><dt>Max hold</dt><dd>15 min</dd></div>
+              </dl>
+              <div class="pos-actions"><span class="w-btn">Show on chart</span><span class="w-btn">Open in DexScreener ↗</span></div>
+            </div>
+            <div class="pos de">
+              <span class="chev">▼</span>
+              <span class="name"><b>NUB</b><small>0.100 SOL</small><span class="sub">MC $7.8K → $6.9K · 5m</span></span>
+              <span class="pnl down"><b>▼ -0.0115</b><span>-11.5%</span></span>
+              <span class="sell">Sell</span>
+            </div>
+            <div class="pos ue">
+              <span class="chev">▼</span>
+              <span class="name"><b>WOJAK2</b><small>0.100 SOL</small><span class="sub">MC $5.1K → $5.6K · 1m</span></span>
+              <span class="pnl up"><b>▲ +0.0098</b><span>+9.8%</span></span>
+              <span class="sell">Sell</span>
+            </div>
+            <div class="pos" style="border-bottom:0;opacity:.55">
+              <span class="chev">▼</span>
+              <span class="name"><b>7xKX…9fQa</b><small>0.100 SOL</small><span class="sub">MC — · 0m · list scrolls past ~4½ rows</span></span>
+              <span class="pnl mut"><b>—</b><span>—</span></span>
+              <span class="sell">Sell</span>
+            </div>
+          </section>
+
+          <!-- BotControls -->
+          <section class="w-card">
+            <span class="tag">BotControls</span>
+            <div class="row-sb" style="margin-bottom:10px">
+              <p class="w-h">Auto trading</p>
+              <span class="status-pill if-running"><span class="dot on"></span>RUNNING</span>
+              <span class="status-pill if-stopped" style="background:transparent;color:var(--s-muted)"><span class="dot off"></span>STOPPED</span>
+            </div>
+            <div class="field">
+              <span class="lbl">Strategy</span>
+              <span class="input">Profit<span class="mut">▾</span></span>
+              <span class="hint">Established movers only. Conservative, lower variance. Takes effect within ~8 s, bot running or not.</span>
+            </div>
+
+            <div class="if-stopped">
+              <div class="field"><span class="lbl">Per trade limit (SOL)</span><span class="input">0.1</span><span class="hint">0.001 - 5 SOL</span></div>
+              <div class="field"><span class="lbl">Daily loss cap (SOL)</span><span class="input">1</span><span class="hint">0.001 - 1000 SOL</span></div>
+              <div class="field"><span class="lbl">Max open positions</span><span class="input">10</span><span class="hint">1 - 50 (ceiling set by PAPER_MAX_OPEN_POSITIONS)</span></div>
+              <div class="field"><span class="lbl">Risk preset</span><span class="input">Balanced<span class="mut">▾</span></span><span class="hint">Sets take-profit, stop-loss and hold time. Your limits above override its size and cap.</span></div>
+              <span class="w-btn brand full">Start bot</span>
+            </div>
+
+            <div class="if-running">
+              <dl class="ro">
+                <div><dt>Per trade</dt><dd>0.100 SOL</dd></div>
+                <div><dt>Daily loss cap</dt><dd>1.00 · used 0.120</dd></div>
+                <div><dt>Max open positions</dt><dd>10</dd></div>
+                <div><dt>Exit rules</dt><dd>TP +40% · SL -20% · 15 min hold</dd></div>
+                <div><dt>Flat-position cut</dt><dd>off</dd></div>
+              </dl>
+              <div class="slots">
+                <div class="row-sb"><span class="mut">Slots</span><span class="fw6">4 / 10 open</span></div>
+                <div class="bar"><i></i></div>
+                <span class="mut">2 fresh buy signals in the queue right now.</span>
+              </div>
+              <p class="hint" style="margin:8px 0">Stop the bot to change limits - they apply when a session starts.</p>
+              <span class="w-btn stop full">Stop bot</span>
+            </div>
+          </section>
+        </div>
+
+        <!-- LiveLog -->
+        <section class="w-card flush">
+          <span class="tag">LiveLog</span>
+          <div class="row-sb" style="padding:8px 12px;border-bottom:1px solid var(--s-border)">
+            <p class="w-h">Live log</p><span class="mut" style="font-size:10.5px">Trades and bot events only</span>
+          </div>
+          <div class="log-row"><time>14:02:11</time><span class="kind o">OPENED</span><span class="ellip">WOJAK2 · bought 0.100 SOL <span class="mut">(Auto)</span></span><span></span></div>
+          <div class="log-row"><time>14:01:47</time><span class="kind t">PARTIAL PROFIT</span><span class="ellip">GIGA · banked half at target <span class="mut">(Auto)</span></span><span class="up">+0.0150</span></div>
+          <div class="log-row"><time>13:58:02</time><span class="kind">CLOSED</span><span class="ellip">PEPE2 · take-profit <span class="mut">(Auto)</span></span><span class="up">+0.0412</span></div>
+          <div class="log-row"><time>13:44:30</time><span class="kind s">BOT</span><span class="ellip">Session started · balanced preset <span class="mut">(You)</span></span><span></span></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <dl class="regions">
+    <div>
+      <dt>TickerProvider<small>components/ticker/TickerProvider.tsx</small></dt>
+      <dd>Not visible. Polls <code>/api/ticker</code> once and feeds all four regions. It also holds the chart target and the 10-minute sparkline history.</dd>
+    </div>
+    <div>
+      <dt>PnlHero<small>components/ticker/PnlHero.tsx · PnlSparkline.tsx</small></dt>
+      <dd>Left side: total P&amp;L (realized + unrealized), its A$ value, Open and Realized, then the Invested, Value and Available tiles. Right side: the sparkline for the whole portfolio or one chosen position. The top edge is green or red with the P&amp;L. When the data is STALE or errors, a Retry button and an error strip appear.</dd>
+    </div>
+    <div>
+      <dt>PositionList<small>components/ticker/PositionList.tsx</small></dt>
+      <dd>Open and Closed tabs with counts, and Sell all on the Open tab. The list scrolls after about 4½ rows (max 19rem). Closed rows show the exit reason, hold time and a DexScreener link.</dd>
+    </div>
+    <div>
+      <dt>PositionRow<small>components/ticker/PositionRow.tsx</small></dt>
+      <dd>Clicking the row expands it: prices, market caps, size, P&amp;L, age, TP/SL, max hold and mint, plus "Show on chart" and "Open in DexScreener". Sell sits outside the expand button.</dd>
+    </div>
+    <div>
+      <dt>BotControls<small>components/ticker/BotControls.tsx</small></dt>
+      <dd>Strategy is always editable. When stopped, it shows the per-trade size, daily loss cap, max open positions and risk preset, plus Start bot. While running, those limits are read-only, joined by the exit rules, a slots bar and Stop bot. Flip "Bot running" in the bar above to see it.</dd>
+    </div>
+    <div>
+      <dt>LiveLog<small>components/ticker/LiveLog.tsx</small></dt>
+      <dd>Spans the full width under the grid. Shows OPENED, CLOSED, PARTIAL PROFIT, BOT, HALT and ERROR events only. Scrolls after 18rem.</dd>
+    </div>
+  </dl>
+</section>
+
+<!-- ============ WALLET ============ -->
+<section class="page" id="wallet" aria-labelledby="wallet-h">
+  <h2 class="page-head" id="wallet-h"><span class="route">/wallet</span><span class="pname">Balance &amp; watchlist</span></h2>
+  <p class="page-meta">app/wallet/page.tsx → components/WalletPage.tsx (client-only) · shell: PortalLayout</p>
+  <p class="page-sum">
+    One column of three cards and a link back to Trade. It shows cash facts only. Positions and P&amp;L live on
+    <code>/trade</code> so the two pages never disagree. Switch Demo/Real above to see the balance card and status change.
+  </p>
+
+  <div class="frame-scroll">
+    <div class="screen desktop">
+      <div class="url"><b>localhost:3000</b>/wallet<span>desktop</span></div>
+      <div data-shell="wallet" data-notags></div>
+      <div class="w-main">
+
+        <section class="w-card">
+          <span class="tag">SessionWalletBalance · hero</span>
+          <div class="wh">
+            <div>
+              <h5>Wallet</h5>
+              <p class="w-h if-demo">Demo wallet</p>
+              <p class="w-h if-real">Wallet balance</p>
+              <div class="bal if-demo">10.421<small>SOL</small></div>
+              <div class="bal if-real">4.203<small>SOL</small></div>
+              <div class="mut if-demo" style="font-size:12px">A$2,376 <span style="font-size:10px">(1 SOL = A$228)</span></div>
+              <div class="mut if-real" style="font-size:12px">A$958 <span style="font-size:10px">(1 SOL = A$228)</span></div>
+              <div class="mut if-demo" style="font-size:10.5px;margin-top:6px">Cash 9.921 SOL · Locked in positions 0.500 SOL</div>
+            </div>
+            <div class="if-demo"><span class="w-btn">Reset demo account</span></div>
+            <div class="wp if-real rel">
+              <span class="p mut">7xKX…9fQa</span>
+              <span class="p up">4.2031 SOL</span>
+              <span class="mut" style="font-size:10px">14:59</span>
+              <span class="w-btn danger">Lock</span>
+              <span class="mut" style="font-size:10px;text-decoration:underline">wipe</span>
+              <span class="tag b r">WalletPanel</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="w-card">
+          <span class="tag">Status</span>
+          <p class="w-h">Status</p>
+          <dl class="status4 if-demo">
+            <div><dt>Mode</dt><dd class="acc">Demo - play money</dd></div>
+            <div><dt>Open positions</dt><dd>4</dd></div>
+            <div><dt>Closed trades</dt><dd>9</dd></div>
+            <div><dt>Starting balance</dt><dd>10.000 SOL</dd></div>
+          </dl>
+          <dl class="status4 if-real">
+            <div><dt>Mode</dt><dd class="wrn">Real wallet</dd></div>
+            <div><dt>Wallet</dt><dd class="up">Unlocked</dd></div>
+            <div><dt>Live execution</dt><dd class="mut">OFF</dd></div>
+            <div><dt>Dry run</dt><dd class="up">ON - orders are not sent</dd></div>
+          </dl>
+        </section>
+
+        <section class="w-card">
+          <span class="tag">WatchlistPanel</span>
+          <div class="row-sb"><p class="w-h">Smart money wallets</p><span class="mut" style="font-size:10.5px">3 followed · 2 with a profile</span></div>
+          <p class="mut" style="margin:4px 0 0;font-size:10.5px">Wallets you want the bot to follow. A buy from one of these counts as a strong entry signal for the <span style="color:var(--s-fg)">Smart Money</span> preset.</p>
+          <div class="warnbox"><b>⚠</b><span>Our own scoring cannot judge these wallets yet. Every trade we ingest is a bonding-curve trade, so a wallet that takes profit after a coin graduates looks to us like it bought and never sold.</span></div>
+          <div class="textarea">Paste Solana addresses - one per line, or comma separated</div>
+          <div class="addrow"><span class="w-btn brand">+ Add wallets</span><span class="up">2 added, 1 duplicate</span></div>
+          <div class="wl">
+            <div class="wl-row"><div><code>9WzD…AWWM</code><span class="badge ok">passes our bar</span><div class="up">+38% avg over 14 exits (t 2.1)</div></div><span class="trash"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3h8M4.5 3V2h3v1M3 3l.5 7.5h5L9 3" fill="none" stroke="currentColor" stroke-width="1.1"/></svg></span></div>
+            <div class="wl-row"><div><code>5Q54…4j1c</code><span class="badge warn">bundled</span><div class="mut">-12% avg over 6 exits - not significant (t 0.8)</div></div><span class="trash"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3h8M4.5 3V2h3v1M3 3l.5 7.5h5L9 3" fill="none" stroke="currentColor" stroke-width="1.1"/></svg></span></div>
+            <div class="wl-row"><div><code>Hn7c…8aKq</code><div class="mut">no data - we have never seen this wallet trade</div></div><span class="trash"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3h8M4.5 3V2h3v1M3 3l.5 7.5h5L9 3" fill="none" stroke="currentColor" stroke-width="1.1"/></svg></span></div>
+          </div>
+        </section>
+
+        <p class="backlink">Positions, P&amp;L and the bot live on <span class="acc">Trade →</span></p>
+      </div>
+    </div>
+  </div>
+
+  <dl class="regions">
+    <div>
+      <dt>SessionWalletBalance<small>components/SessionWalletBalance.tsx · variant="hero"</small></dt>
+      <dd>Balance in SOL and A$. Demo adds the cash/locked split and "Reset demo account". Real mounts WalletPanel on the right and refreshes the balance every 15 s.</dd>
+    </div>
+    <div>
+      <dt>WalletPanel<small>components/WalletPanel.tsx · real mode only</small></dt>
+      <dd>With no wallet: "Set up trading wallet", or a Phantom chip plus "Local vault". Locked: the address and Unlock (passphrase entered inline). Unlocked: address, balance, auto-lock countdown, Lock and wipe.</dd>
+    </div>
+    <div>
+      <dt>Status<small>inside components/WalletPage.tsx</small></dt>
+      <dd>Four label/value pairs, in two columns on phones. Demo: mode, open positions, closed trades, starting balance. Real: mode, lock state, live execution, dry run.</dd>
+    </div>
+    <div>
+      <dt>WatchlistPanel<small>components/watchlist/WatchlistPanel.tsx</small></dt>
+      <dd>The coverage warning, a paste box for Solana addresses (wrong-chain addresses are rejected with a reason), then the followed wallets with our profile verdict and a remove button. Scrolls after 18rem.</dd>
+    </div>
+  </dl>
+</section>
+
+<!-- ============ PHONES ============ -->
+<section class="page" id="phone" aria-labelledby="phone-h">
+  <h2 class="page-head" id="phone-h"><span class="route">&lt; md</span><span class="pname">At phone width</span></h2>
+  <p class="section-sum">
+    Everything collapses to one column. The nav keeps the logo mark, tabs, bot state and pill. The rest goes behind ☰.
+    On <code>/trade</code>, BotControls moves above the positions (CSS <code>order</code>, nothing rendered twice).
+  </p>
+
+  <div class="phones">
+    <div class="phone-wrap">
+      <div class="phone">
+        <div class="p-center">
+          <div class="l-brand"><i>P</i><span>Pump<em>Radar</em></span></div>
+          <div style="font-size:13px;font-weight:600">Choose a wallet to start trading</div>
+          <div class="mut" style="font-size:9.5px;margin-top:4px">A local pump.fun auto-trading terminal…</div>
+        </div>
+        <div class="pl-cards">
+          <div class="blk hi tall"><b>Demo wallet</b><span>Play money, simulated fills. Starts with 10 SOL.</span><span class="acc" style="margin-top:8px">Start in demo →</span></div>
+          <div class="blk tall"><b>Real wallet</b><span>Your connected wallet trades on-chain.</span><span class="wrn" style="margin-top:8px">Connect real wallet →</span></div>
+        </div>
+        <div class="mut" style="font-size:8.5px;text-align:center;margin-top:12px">Runs locally. Not financial advice…</div>
+      </div>
+      <div class="ph-cap"><code>/</code><span>Cards stack below sm.</span></div>
+    </div>
+
+    <div class="phone-wrap">
+      <div class="phone">
+        <div class="p-banner demo if-demo">DEMO - PLAY MONEY</div>
+        <div class="p-banner real if-real">REAL WALLET</div>
+        <div class="p-nav">
+          <span class="w-logo"><i>P</i></span>
+          <span class="w-tab on">Trade</span><span class="w-tab">Wallet</span>
+          <span class="dot on if-running"></span><span class="dot off if-stopped"></span>
+          <span class="w-pill demo if-demo">Demo</span><span class="w-pill real if-real">Real</span>
+          <span class="hamb">☰</span>
+        </div>
+        <div class="blk hi"><b>PnlHero</b><span class="up" style="font-size:15px;font-weight:600">+0.4213 SOL</span><span>tiles, then sparkline below</span></div>
+        <div class="blk"><b>BotControls</b><span class="if-stopped">limits form · Start bot</span><span class="if-running">limits · slots · Stop bot</span></div>
+        <div class="blk tall"><b>PositionList</b><span>Open 4 · Closed 9 · Sell all</span><span>rows + Sell</span></div>
+        <div class="blk"><b>LiveLog</b><span>events</span></div>
+      </div>
+      <div class="ph-cap"><code>/trade</code><span>Bot panel moves up to second.</span></div>
+    </div>
+
+    <div class="phone-wrap">
+      <div class="phone">
+        <div class="p-banner demo if-demo">DEMO - PLAY MONEY</div>
+        <div class="p-banner real if-real">REAL WALLET</div>
+        <div class="p-nav">
+          <span class="w-logo"><i>P</i></span>
+          <span class="w-tab on">Trade</span><span class="w-tab">Wallet</span>
+          <span class="dot on if-running"></span><span class="dot off if-stopped"></span>
+          <span class="w-pill demo if-demo">Demo</span><span class="w-pill real if-real">Real</span>
+          <span class="hamb">✕</span>
+        </div>
+        <div class="p-drawer">
+          <span style="display:flex;gap:5px;flex-wrap:wrap"><span class="w-btn if-demo">↺ Reset</span><span class="w-btn">⇥ Log off</span></span>
+          <span style="display:flex;gap:5px;flex-wrap:wrap"><span class="w-btn danger">Pause trading</span><span class="w-btn ok">Resume trading</span></span>
+        </div>
+        <div class="blk" style="opacity:.5"><b>PnlHero</b><span>…</span></div>
+        <div class="blk" style="opacity:.5"><b>BotControls</b><span>…</span></div>
+      </div>
+      <div class="ph-cap"><code>☰ open</code><span>Session buttons, then halt controls. Closes on navigation.</span></div>
+    </div>
+
+    <div class="phone-wrap">
+      <div class="phone">
+        <div class="p-banner demo if-demo">DEMO - PLAY MONEY</div>
+        <div class="p-banner real if-real">REAL WALLET</div>
+        <div class="p-nav">
+          <span class="w-logo"><i>P</i></span>
+          <span class="w-tab">Trade</span><span class="w-tab on">Wallet</span>
+          <span class="dot on if-running"></span><span class="dot off if-stopped"></span>
+          <span class="w-pill demo if-demo">Demo</span><span class="w-pill real if-real">Real</span>
+          <span class="hamb">☰</span>
+        </div>
+        <div class="blk hi"><b>SessionWalletBalance</b><span style="font-family:var(--f-mono);font-size:15px;color:var(--s-fg);font-weight:600"><span class="if-demo">10.421 SOL</span><span class="if-real">4.203 SOL</span></span><span class="if-demo">Reset demo account (below)</span><span class="if-real">WalletPanel (below)</span></div>
+        <div class="blk"><b>Status</b><span>2 × 2 grid</span></div>
+        <div class="blk tall"><b>WatchlistPanel</b><span>warning · paste box · list</span></div>
+        <div class="mut" style="font-size:9.5px;margin-top:8px">Positions, P&amp;L and the bot live on <span class="acc">Trade →</span></div>
+      </div>
+      <div class="ph-cap"><code>/wallet</code><span>Balance card stacks its controls under the figure.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ OVERLAYS ============ -->
+<section class="page" id="overlays" aria-labelledby="ov-h">
+  <h2 class="page-head" id="ov-h"><span class="route">overlays</span><span class="pname">Modals, popovers, loading</span></h2>
+  <p class="section-sum">These sit on top of the pages above. ModeGate is mounted once for the whole app in <code>app/providers.tsx</code>. The others belong to the component that opens them.</p>
+
+  <div class="overlays">
+    <div class="ov">
+      <figure>
+        <div class="screen mini">
+          <div class="ghost"><div></div><div></div><div></div></div>
+          <div class="dim">
+            <div class="modal">
+              <h6>Pick a wallet first</h6>
+              <p>Demo and real accounts are separate sessions. Choose one on the home page — there is no switch while you are trading.</p>
+              <span class="w-btn full acc" style="justify-content:center;border-color:rgba(22,199,132,.4);background:rgba(22,199,132,.1)">Go to wallet chooser</span>
+            </div>
+          </div>
+        </div>
+        <figcaption><code>ModeGate</code><small>components/ModeGate.tsx</small>Covers <code>/trade</code> and <code>/wallet</code> when no session is chosen. A bottom sheet on phones, a centred card from sm up.</figcaption>
+      </figure>
+    </div>
+
+    <div class="ov">
+      <figure>
+        <div class="screen mini">
+          <div class="ghost"><div></div><div></div><div></div></div>
+          <div class="dim">
+            <div class="modal">
+              <h6>Start a real wallet session?</h6>
+              <p>Real mode uses your wallet and real SOL. You can lose everything.</p>
+              <ul><li>Demo history: 3 day(s), 12 closed demo trade(s)</li><li>[ ] 7+ days in demo</li><li>[ ] 20+ closed demo trades</li></ul>
+              <div class="ack"><i></i><span>I understand the risk and want to use real money anyway.</span></div>
+              <div class="btnrow"><span class="w-btn">Stay on Demo</span><span class="w-btn stop disabled">Use Real wallet</span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><code>RealModeGate</code><small>components/RealModeGate.tsx</small>Opened from the Real card on <code>/</code>. If the demo history falls short, "Use Real wallet" stays disabled until the risk box is ticked.</figcaption>
+      </figure>
+    </div>
+
+    <div class="ov">
+      <figure>
+        <div class="screen mini">
+          <div class="w-nav" style="padding:8px 12px"><span class="w-logo"><i>P</i></span><span class="w-right"><span class="w-pill demo">Demo</span><span class="help" style="border-color:var(--s-fg);color:var(--s-fg)">?</span></span></div>
+          <div class="pop">
+            <p><b>Demo vs Real</b></p>
+            <p>Pick one on the home page. While you trade, only that session is shown — use <b>Log off</b> to return home.</p>
+            <p><span class="lab" style="background:rgba(34,197,94,.1);color:var(--s-ok)">Demo</span> Virtual wallet, simulated (paper) fills.</p>
+            <p style="margin:0"><span class="lab" style="background:rgba(234,179,8,.1);color:var(--s-warn)">Real</span> Your connected wallet trades on-chain.</p>
+          </div>
+        </div>
+        <figcaption><code>ModeGlossary</code><small>components/ModeGlossary.tsx</small>A 288px popover anchored under the "?" in the nav, desktop only. Opened from the nav on <code>/trade</code> and <code>/wallet</code>.</figcaption>
+      </figure>
+    </div>
+
+    <div class="ov">
+      <figure>
+        <div class="screen mini">
+          <div class="loadings">
+            <div class="spin"></div>
+            <div class="skel pulse" style="width:40%"></div>
+            <div class="skel pulse" style="height:24px"></div>
+            <div class="skel pulse" style="height:60px"></div>
+            <div class="skel pulse" style="height:70px"></div>
+          </div>
+        </div>
+        <figcaption><code>loading states</code><small>app/loading.tsx · app/trade/loading.tsx · app/wallet/page.tsx</small>A spinner for any route while it compiles. <code>/trade</code> shows a skeleton (title, bar, hero block, list block). <code>/wallet</code> shows a pulsing 256px card until WalletPage's client code loads.</figcaption>
+      </figure>
+    </div>
+
+    <div class="ov">
+      <figure>
+        <div class="screen mini">
+          <div class="ghost"><div></div><div></div><div></div></div>
+          <div class="dim">
+            <div class="modal">
+              <h6>WalletSetupModal</h6>
+              <p>Opened from WalletPanel's "Set up trading wallet" or "Local vault" button, on <code>/wallet</code> in Real mode.</p>
+              <span class="w-btn full" style="justify-content:center">Close</span>
+            </div>
+          </div>
+        </div>
+        <figcaption><code>WalletSetupModal</code><small>components/WalletSetupModal.tsx</small>Local-vault wallet setup, real mode only. This frame only marks where it opens. Its contents aren't drawn.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TREE ============ -->
+<section class="page" id="tree" aria-labelledby="tree-h">
+  <h2 class="page-head" id="tree-h"><span class="route">tree</span><span class="pname">How a page is assembled</span></h2>
+  <p class="section-sum">The render path from the root layout to each page's regions.</p>
+  <div class="tree-box">
+<pre class="tree"><span class="k">app/layout.tsx</span>                 RootLayout  <span class="n">&lt;html&gt;&lt;body&gt;</span>
+└─ <span class="k">app/providers.tsx</span>          AppProviders
+   └─ PhantomConnectRoot       <span class="n">only when Phantom connect is enabled</span>
+      └─ TradingModeProvider   <span class="n">mode · session · demo balance · wallet flags</span>
+         ├─ RuntimePerfBeacon
+         ├─ ChunkLoadRecovery
+         ├─ ModeGate            <span class="n">overlay on /trade and /wallet when no session</span>
+         └─ AppChrome           <span class="n">pathname === "/" ?</span>
+            ├─ <span class="k">/</span>        → app/page.tsx → LandingPage
+            │                              └─ RealModeGate
+            └─ <span class="k">else</span>     → PortalLayout
+                           ├─ ModeBanner
+                           ├─ TopNav  <span class="n">(ModeGlossary, HaltButton)</span>
+                           └─ &lt;main&gt;
+                              ├─ <span class="k">/trade</span>  → TickerProvider
+                              │             ├─ PnlHero → PnlSparkline
+                              │             ├─ grid: PositionList → PositionRow · BotControls
+                              │             └─ LiveLog
+                              └─ <span class="k">/wallet</span> → WalletPage
+                                            ├─ SessionWalletBalance → WalletPanel → WalletSetupModal
+                                            ├─ Status
+                                            └─ WatchlistPanel</pre>
+  </div>
+  <p class="foot">Mapped from the source on branch hardening/group-1-3. Tickers, balances and P&amp;L figures are samples, not your data.</p>
+</section>
+
+</div>
+</div>
+
+<script>
+(function () {
+  var doc = document.querySelector(".doc");
+  var tpl = document.getElementById("shell-tpl");
+  document.querySelectorAll("[data-shell]").forEach(function (slot) {
+    var frag = tpl.content.cloneNode(true);
+    var active = slot.getAttribute("data-shell");
+    frag.querySelectorAll(".w-tab").forEach(function (t) {
+      t.classList.toggle("on", t.getAttribute("data-tab") === active);
+    });
+    if (slot.hasAttribute("data-notags")) {
+      frag.querySelectorAll(".tag").forEach(function (t) { t.remove(); });
+    }
+    slot.replaceWith(frag);
+  });
+  function sync() {
+    var m = document.querySelector('input[name="mode"]:checked');
+    var b = document.querySelector('input[name="bot"]:checked');
+    doc.setAttribute("data-mode", m ? m.value : "demo");
+    doc.setAttribute("data-bot", b ? b.value : "stopped");
+  }
+  document.querySelectorAll(".seg input").forEach(function (i) { i.addEventListener("change", sync); });
+  sync();
+})();
+</script>
+</body>
+</html>

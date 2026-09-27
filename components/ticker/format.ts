@@ -80,6 +80,21 @@ export function clock(iso: string | number): string {
   return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+/** Local date + second-precision time for trade audit details. */
+export function dateTime(iso: string | number | null | undefined): string {
+  if (iso == null) return "—";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 /**
  * The activity log stores machine-ish messages ("Opened 0.03 SOL @ v=3116.947…",
  * "Closed sl · PnL -0.0052757…"). Strip the internals so the operator reads

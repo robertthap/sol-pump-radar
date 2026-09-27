@@ -22,7 +22,9 @@ import { useTradingMode } from "@/components/TradingModeProvider";
  * every /api call, which would make the ticker's "one request per tick" two.
  */
 
-export type SparklineTarget = { kind: "portfolio" } | { kind: "position"; mint: string; symbol: string | null };
+export type SparklineTarget =
+  | { kind: "portfolio" }
+  | { kind: "position"; id: string; mint: string; symbol: string | null };
 
 export type SeriesPoint = [tMs: number, value: number];
 
@@ -38,6 +40,8 @@ type TickerState = {
   setTarget: (t: SparklineTarget) => void;
   /** Series for the current target - live, this tab only. */
   series: SeriesPoint[];
+  /** Current-market-cap history for one exact trade, keyed by position id. */
+  seriesForPosition: (positionId: string) => SeriesPoint[];
   refresh: () => Promise<void>;
   /** Wipe the recorded P&L history (storage + memory) — used by the demo reset. */
   clearSeries: () => void;
@@ -48,11 +52,11 @@ type TickerState = {
 const Ctx = createContext<TickerState | null>(null);
 
 const SERIES_CAP = 600; // ~10 min at 1 s
-const SERIES_KEY = "spr_ticker_series_v1";
+const SERIES_KEY = "spr_ticker_series_v2";
 const STATUS_THROTTLE_MS = 30_000;
 
 function targetKey(t: SparklineTarget): string {
-  return t.kind === "portfolio" ? "portfolio" : `pos:${t.mint}`;
+  return t.kind === "portfolio" ? "portfolio" : `pnl:${t.id}`;
 }
 
 function loadSeries(): Record<string, SeriesPoint[]> {
@@ -163,9 +167,14 @@ export function TickerProvider({ children }: { children: ReactNode }) {
           push("portfolio", j.portfolio.totalPnlSol);
           const openKeys = new Set<string>(["portfolio"]);
           for (const p of j.positions) {
-            const k = `pos:${p.mint}`;
-            openKeys.add(k);
-            if (p.pnlSol != null && Number.isFinite(p.pnlSol)) push(k, p.pnlSol);
+            const pnlKey = `pnl:${p.id}`;
+            const marketKey = `mcap:${p.id}`;
+            openKeys.add(pnlKey);
+            openKeys.add(marketKey);
+            if (p.pnlSol != null && Number.isFinite(p.pnlSol)) push(pnlKey, p.pnlSol);
+            if (p.currentMcapUsd != null && Number.isFinite(p.currentMcapUsd)) {
+              push(marketKey, p.currentMcapUsd);
+            }
           }
           // Drop series for positions that are no longer open so storage stays bounded.
           for (const k of Object.keys(next)) if (!openKeys.has(k)) delete next[k];
@@ -215,20 +224,24 @@ export function TickerProvider({ children }: { children: ReactNode }) {
 
   // If the selected position closes, return to the portfolio series.
   useEffect(() => {
-    if (target.kind === "position" && data && !data.positions.some((p) => p.mint === target.mint)) {
+    if (target.kind === "position" && data && !data.positions.some((p) => p.id === target.id)) {
       setTarget({ kind: "portfolio" });
     }
   }, [data, target]);
 
   const series = useMemo(() => seriesMap[targetKey(target)] ?? [], [seriesMap, target]);
+  const seriesForPosition = useCallback(
+    (positionId: string) => seriesMap[`mcap:${positionId}`] ?? [],
+    [seriesMap],
+  );
 
   // clearTickerSeries() broadcasts; the listener above does the state work, so
   // this behaves identically whether called from inside or outside the provider.
   const clearSeries = useCallback(() => clearTickerSeries(), []);
 
   const value = useMemo<TickerState>(
-    () => ({ data, error, lastOkAt, now, pollMs, target, setTarget, series, refresh, clearSeries, statusSentence }),
-    [data, error, lastOkAt, now, pollMs, target, series, refresh, clearSeries, statusSentence],
+    () => ({ data, error, lastOkAt, now, pollMs, target, setTarget, series, seriesForPosition, refresh, clearSeries, statusSentence }),
+    [data, error, lastOkAt, now, pollMs, target, series, seriesForPosition, refresh, clearSeries, statusSentence],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

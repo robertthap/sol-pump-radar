@@ -19,6 +19,78 @@ Auto-trading is **off after every restart** by design: the worker retires any se
 `active` at boot, so you must press Start explicitly. That is the primary safety property for
 live mode and should not be "fixed".
 
+The one opt-in exception is for paper evaluations: `RESUME_PAPER_SESSION_ON_BOOT=on` keeps an
+active **paper** session (and the Demo selection) across a restart. Live sessions are always
+retired.
+
+### Long-running paper evaluations
+
+```bash
+pnpm worker:supervised             # instead of `pnpm worker`
+```
+
+`scripts/worker-supervisor.ps1` keeps the PC awake while it runs, starts Docker Desktop and the
+Postgres container if they are down (they stop when the machine sleeps), runs the worker, and
+restarts it with backoff (5 s → 60 s) whenever it exits. Pair it with
+`RESUME_PAPER_SESSION_ON_BOOT=on` so the session survives those restarts.
+
+---
+
+## Pricing (single source)
+
+Every price the system books or decides on comes from the chain (`lib/pricing/live-price.ts`):
+
+| Coin phase | Source | Value |
+|---|---|---|
+| On the bonding curve | the bonding-curve account | curve-equivalent vSol from its spot price |
+| Graduated | the canonical PumpSwap pool's two vaults | same scale, from the pool's spot price |
+| Unknown | — | no price: fills are refused, exits hold |
+
+"Curve-equivalent vSol" is `sqrt(price_sol_per_token × 32.19 × 1e9)`. It equals the raw virtual
+SOL reserve on the standard curve and keeps non-standard curves (Mayhem mode) and graduated pools
+on one scale, with no SOL/USD rate involved, so P&L `(current / entry)²` is exact in SOL.
+
+Consumers: paper fills/closes/mark-to-market (`paperPriceResolver`), the exit loop (one batched
+read per tick, persisted to `paper_positions.current_price` + `entry_features.price_at_ms`), the
+`/trade` screen (shows that persisted price; older than 15 s shows as unpriced), live routing and
+live exits. The pump.fun API is no longer used to price exits.
+
+Ingestion stores the same scale: `lib/pump/parser.ts` derives `events.v_sol_after` from the
+event's virtual SOL **and** token reserves, and decodes only TradeEvents emitted by the pump.fun
+program (Raydium LaunchLab emits a same-named event with a different layout).
+
+## Entry gates
+
+Apply in every `ENTRY_MODE`: `MAX_ENTRY_AGE_SEC` (token age), `ENTRY_MIN_DEX_BUYS_M5`,
+`MAX_ENTRY_MCAP_USD` (measured from the on-chain price), and `MAX_DECISION_AGE_SEC` (default 15:
+a committed decision older than this at fill time is skipped).
+
+## Live trade settlement
+
+A live buy or sell is only booked once its transaction is confirmed on-chain:
+
+- sent buy → `live_trades.status = 'pending'`; sent sell → `entry_features.pending_sell`
+  (`status = 'pending_close'` for a full sell)
+- `lib/workers/live-settlement.ts` (every 2 s) checks the signatures; on confirmation it reads
+  the transaction and books the real fill (`lib/executor/swap-fill.ts`): entry price and all-in
+  cost for a buy; proceeds, exit price, realized P&L, session stats and the notification for a sell
+- not seen within 120 s, or failed on-chain: a buy is marked `failed`; an automatic exit returns
+  to `open` and is retried; a manual sell becomes `close_failed`; a failed partial take-profit is
+  cleared so it can fire again
+
+Routing follows the on-chain phase: graduated → Jupiter; curve → PumpPortal `pool: "pump"`;
+unknown phase → buys refused, sells via PumpPortal `pool: "auto"`. Live exits run the same exit
+policy as paper (`lib/paper/exit-decision.ts`).
+
+## Data quarantine
+
+`scripts/quarantine-bad-data.ts` (dry run by default, `--apply` to act) moves rows the 2026-09-13
+audit proved wrong into `trade_outcomes_quarantine` / `events_quarantine` with a reason, flags
+phantom stop-outs in `paper_positions.entry_features.accounting_error`, and removes heartbeat rows
+of deleted workers. Applied once on 2026-09-13: 51 outcomes (+78.97 SOL of fabricated P&L),
+8 events, 5 heartbeat rows, 2 flagged positions. Reverse with `INSERT INTO trade_outcomes SELECT …`
+from the quarantine table.
+
 ### Restart discipline
 
 The worker does **not** hot-reload. Its in-memory state (prior-snapshot maps,

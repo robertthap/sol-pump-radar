@@ -1,23 +1,14 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { useTicker } from "@/components/ticker/TickerProvider";
+import { CopyMintButton } from "@/components/ticker/CopyMintButton";
+import { ClosedPositionRow } from "@/components/ticker/ClosedPositionRow";
 import { PositionRow } from "@/components/ticker/PositionRow";
+import type { TickerClosedPosition, TickerClosedPositionsResponse } from "@/lib/auto/ticker-snapshot";
 import { submitSellAll } from "@/lib/trade-client";
-import {
-  arrowOf,
-  clock,
-  closeReasonWords,
-  heldFor,
-  plainSol,
-  shortMint,
-  signedPct,
-  signedSol,
-  toneClass,
-  toneOf,
-  tradeErrorMessage,
-} from "@/components/ticker/format";
+import { clock, shortMint, tradeErrorMessage } from "@/components/ticker/format";
 
 /**
  * Open | Closed tabs over one scrolling list. The list viewport is sized to
@@ -25,7 +16,7 @@ import {
  * scrolls - so a 14-position session no longer pushes the bot panel and the
  * log off screen. Sell all lives on the Open tab only.
  */
-type Tab = "open" | "closed";
+type Tab = "scouting" | "open" | "closed";
 
 export function PositionList() {
   const { data, refresh } = useTicker();
@@ -33,11 +24,48 @@ export function PositionList() {
   const [busy, setBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const ids = { open: useId(), closed: useId() };
+  const [closedHistory, setClosedHistory] = useState<TickerClosedPosition[] | null>(null);
+  const [closedSessionId, setClosedSessionId] = useState<string | null>(null);
+  const [closedLoading, setClosedLoading] = useState(false);
+  const [closedError, setClosedError] = useState<string | null>(null);
+  const ids = { scouting: useId(), open: useId(), closed: useId() };
 
   const positions = data?.positions ?? [];
-  const closed = data?.closedPositions ?? [];
+  const closedPreview = data?.closedPositions ?? [];
+  const sessionId = data?.session?.id ?? null;
+  const closed = closedSessionId === sessionId && closedHistory ? closedHistory : closedPreview;
+  const closedCount = data?.closedPositionCount ?? closedPreview.length;
+  const scouting = data?.scouting ?? [];
   const n = positions.length;
+
+  useEffect(() => {
+    if (tab !== "closed") return;
+    if (!sessionId) {
+      setClosedHistory([]);
+      setClosedSessionId(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setClosedLoading(true);
+    setClosedError(null);
+    void fetch("/api/ticker/closed", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const body = (await response.json()) as TickerClosedPositionsResponse & { error?: string };
+        if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+        if (body.sessionId !== sessionId) return;
+        setClosedHistory(body.closedPositions);
+        setClosedSessionId(body.sessionId);
+      })
+      .catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        setClosedError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setClosedLoading(false);
+      });
+    return () => controller.abort();
+  }, [tab, sessionId, closedCount]);
 
   async function sellAll() {
     if (busy || n === 0 || !data) return;
@@ -86,8 +114,9 @@ export function PositionList() {
           Positions
         </h2>
         <div role="tablist" aria-label="Positions" className="flex items-center gap-1">
+          {tabBtn("scouting", "Scouting", scouting.length)}
           {tabBtn("open", "Open", n)}
-          {tabBtn("closed", "Closed", closed.length)}
+          {tabBtn("closed", "Closed", closedCount)}
         </div>
         {tab === "open" && (
           <button
@@ -114,6 +143,54 @@ export function PositionList() {
       )}
 
       {/* Both panels stay mounted (hidden) so switching tabs never refetches or loses scroll position. */}
+      <div
+        id={`${ids.scouting}-panel`}
+        role="tabpanel"
+        aria-labelledby={`${ids.scouting}-tab`}
+        hidden={tab !== "scouting"}
+      >
+        <p className="border-b border-border px-3 py-2 text-[11px] text-muted">
+          Recent strategy candidates and unresolved observations. These are not active Open positions.
+        </p>
+        {scouting.length === 0 ? (
+          <p className="px-3 py-6 text-center text-sm text-muted">
+            {data?.bot.running ? "Scanning the live market for the next strategy entry." : "The bot is not scouting."}
+          </p>
+        ) : (
+          <ul className="m-0 max-h-[19rem] list-none overflow-y-auto overscroll-contain p-0">
+            {scouting.map((item) => {
+              const label = item.name?.trim() || item.symbol?.trim() || "Unknown token";
+              const identity =
+                item.symbol?.trim() && item.symbol.trim() !== label
+                  ? `$${item.symbol.trim()} · ${shortMint(item.mint)}`
+                  : shortMint(item.mint);
+              return (
+                <li key={item.id} className="flex items-center gap-2 border-b border-border px-3 py-2 last:border-b-0">
+                  <span className="block min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate font-semibold">{label}</span>
+                      <span className="pill shrink-0 text-[9px] uppercase tracking-wide text-muted">{item.status.replaceAll("_", " ")}</span>
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-muted">{identity} · {item.strategy}</span>
+                    <span className="mt-0.5 block text-xs text-muted">{item.reason} · {clock(item.ts)}</span>
+                  </span>
+                  <CopyMintButton mint={item.mint} tokenLabel={label} className="px-2" />
+                  <a
+                    href={`https://dexscreener.com/solana/${item.mint}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Open ${label} in DexScreener`}
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted hover:bg-panel2 hover:text-fg"
+                  >
+                    <ExternalLink size={14} aria-hidden="true" />
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
       <div id={`${ids.open}-panel`} role="tabpanel" aria-labelledby={`${ids.open}-tab`} hidden={tab !== "open"}>
         {n === 0 ? (
           <p className="px-3 py-6 text-center text-sm text-muted">
@@ -122,55 +199,35 @@ export function PositionList() {
         ) : (
           <ul className="m-0 max-h-[19rem] list-none overflow-y-auto overscroll-contain p-0">
             {positions.map((p) => (
-              <PositionRow key={p.id} p={p} bot={data!.bot} uiMode={data!.status.uiMode} />
+              <PositionRow
+                key={p.id}
+                p={p}
+                bot={data!.bot}
+                uiMode={data!.status.uiMode}
+                marketLive={data!.sourceStatus === "live"}
+              />
             ))}
           </ul>
         )}
       </div>
 
       <div id={`${ids.closed}-panel`} role="tabpanel" aria-labelledby={`${ids.closed}-tab`} hidden={tab !== "closed"}>
-        {closed.length === 0 ? (
+        <div className="flex min-h-9 items-center justify-between border-b border-border px-3 py-1.5 text-[11px] text-muted">
+          <span>{closedLoading ? "Loading complete history…" : `All ${closed.length} closed trades this session`}</span>
+          <span className="tabular-nums">Newest first</span>
+        </div>
+        {closedError && (
+          <p className="border-b border-border px-3 py-2 text-xs text-warn" role="alert">
+            Complete history could not refresh: {closedError}. Showing the available trades.
+          </p>
+        )}
+        {!closedLoading && closed.length === 0 ? (
           <p className="px-3 py-6 text-center text-sm text-muted">Nothing closed this session yet.</p>
         ) : (
-          <ul className="m-0 max-h-[19rem] list-none overflow-y-auto overscroll-contain p-0">
-            {closed.map((c) => {
-              const tone = toneOf(c.pnlSol);
-              const pct = c.pnlSol != null && c.sizeSol > 0 ? c.pnlSol / c.sizeSol : null;
-              return (
-                <li
-                  key={c.id}
-                  className={`flex items-center gap-3 border-b border-border border-l-2 px-3 py-2 last:border-b-0 ${
-                    tone === "up" ? "border-l-ok/60" : tone === "down" ? "border-l-bad/60" : "border-l-border"
-                  }`}
-                >
-                  <span className="block min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate font-semibold tracking-tight">{c.symbol ?? shortMint(c.mint)}</span>
-                      <span className="text-xs text-muted tabular-nums">{plainSol(c.sizeSol)}</span>
-                    </span>
-                    <span className="mt-0.5 block text-xs text-muted tabular-nums">
-                      {closeReasonWords(c.exitReason)} · held {heldFor(c.openedAt, c.closedAt)} · {c.closedAt ? clock(c.closedAt) : "—"}
-                    </span>
-                  </span>
-                  <span className={`block shrink-0 text-right tabular-nums ${toneClass(tone)}`}>
-                    <span className="block font-semibold">
-                      <span aria-hidden="true">{arrowOf(tone)} </span>
-                      {signedSol(c.pnlSol, 4)}
-                    </span>
-                    <span className="block text-xs">{signedPct(pct)}</span>
-                  </span>
-                  <a
-                    href={`https://dexscreener.com/solana/${c.mint}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`Open ${c.symbol ?? shortMint(c.mint)} in DexScreener (opens in a new tab)`}
-                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted hover:bg-panel2 hover:text-fg"
-                  >
-                    <ExternalLink size={14} aria-hidden="true" />
-                  </a>
-                </li>
-              );
-            })}
+          <ul className="m-0 max-h-[28rem] list-none overflow-y-auto overscroll-contain p-0">
+            {closed.map((position) => (
+              <ClosedPositionRow key={position.id} position={position} />
+            ))}
           </ul>
         )}
       </div>

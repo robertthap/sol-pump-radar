@@ -5,6 +5,7 @@ import { PnlHero } from "@/components/ticker/PnlHero";
 import { PositionList } from "@/components/ticker/PositionList";
 import { BotControls } from "@/components/ticker/BotControls";
 import { LiveLog } from "@/components/ticker/LiveLog";
+import { SessionWalletBalance } from "@/components/SessionWalletBalance";
 
 /**
  * /trade - the minimal terminal.
@@ -22,7 +23,9 @@ import { LiveLog } from "@/components/ticker/LiveLog";
 export default function TradePage() {
   return (
     <TickerProvider>
-      <main className="app-page space-y-3">
+      {/* A div, not <main>: PortalLayout already renders the page's single <main> landmark. */}
+      <div className="app-page space-y-3">
+        <SessionWalletBalance variant="compact" />
         <PnlHero />
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_320px]">
           <div className="order-2 min-w-0 md:order-1">
@@ -33,7 +36,7 @@ export default function TradePage() {
           </div>
         </div>
         <LiveLog />
-      </main>
+      </div>
     </TickerProvider>
   );
 }

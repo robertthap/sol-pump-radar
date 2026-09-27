@@ -253,6 +253,8 @@ export async function submitAutoQuickStart(body: {
   preset?: string;
   sizeSol?: number;
   maxDailyLossSol?: number;
+  maxConcurrent?: number;
+  researchExecution?: "OPTIMISTIC" | "BASE" | "CONSERVATIVE";
 }): Promise<{ ok: boolean; error: string | null; correlationId: string }> {
   const r = await fetch("/api/auto/quick-start", {
     method: "POST",
