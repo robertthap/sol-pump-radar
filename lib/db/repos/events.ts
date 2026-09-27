@@ -10,6 +10,12 @@ export type EventKindFilter = "create" | "trade" | "buy" | "sell" | "migrate" | 
 const log = logger("repo:events");
 
 function eventToRow(e: ParsedPumpEvent) {
+  // Position within the transaction's decoded pump events. A create ships with
+  // the dev buy and the curve-filling buy ships with the graduation, so writing
+  // both at 0 made the second one lose the (signature, instruction_index)
+  // conflict and disappear. Absent (hand-built events, older callers) means 0,
+  // which is what a single-event transaction has always been written as.
+  const instructionIndex = e.logIndex ?? 0;
   // The parser already resolved the timestamp AND recorded where it came from.
   // Re-classifying here would look at an already-substituted value and call a
   // local fallback "chain" just because the number looks plausible.
@@ -23,7 +29,7 @@ function eventToRow(e: ParsedPumpEvent) {
     case "sell":
       return {
         signature: e.signature,
-        instructionIndex: 0,
+        instructionIndex,
         slot: e.slot,
         ts,
         kind: e.kind,
@@ -40,7 +46,7 @@ function eventToRow(e: ParsedPumpEvent) {
     case "create":
       return {
         signature: e.signature,
-        instructionIndex: 0,
+        instructionIndex,
         slot: e.slot,
         ts,
         kind: "create" as const,
@@ -57,7 +63,7 @@ function eventToRow(e: ParsedPumpEvent) {
     case "migrate":
       return {
         signature: e.signature,
-        instructionIndex: 0,
+        instructionIndex,
         slot: e.slot,
         ts,
         kind: "migrate" as const,

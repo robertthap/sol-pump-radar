@@ -1,4 +1,11 @@
 export type { PaperRuntimeConfig } from "./config";
+export {
+  researchBuy,
+  researchClose,
+  researchCloseAtMark,
+  researchCensor,
+  researchFailureFee,
+} from "./paper/research";
 export { paperConfigFromEnv } from "./config";
 export type { PositionState } from "./state-machine";
 export { assertTransition, isTerminal, InvalidTransitionError } from "./state-machine";

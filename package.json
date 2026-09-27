@@ -14,7 +14,7 @@
     "lint": "eslint . --quiet",
     "check": "pnpm typecheck && pnpm test && pnpm lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test lib/**/*.test.ts",
+    "test": "node --require ./scripts/preload-windows-userinfo.cjs --import tsx --import ./scripts/preload-cli.ts --test lib/**/*.test.ts",
     "test:core": "pnpm --filter @spr/core run test",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",

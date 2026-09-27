@@ -20,6 +20,19 @@ import {
 import { appendEvent } from "@spr/core";
 import { logger } from "@/lib/log";
 import { paperPriceResolver } from "./price-resolver";
+import {
+  researchBuy,
+  researchClose,
+  researchCloseAtMark,
+  researchCensor,
+  researchFailureFee,
+} from "@spr/trading";
+
+export const paperResearchBuy = (input: Parameters<typeof researchBuy>[0]) => researchBuy(input, getPaperConfig());
+export const paperResearchClose = researchClose;
+export const paperResearchCloseAtMark = researchCloseAtMark;
+export const paperResearchCensor = researchCensor;
+export const paperResearchFailureFee = researchFailureFee;
 
 const log = logger("paper-engine");
 

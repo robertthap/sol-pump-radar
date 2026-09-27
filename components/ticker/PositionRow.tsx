@@ -4,10 +4,17 @@ import { useId, useState } from "react";
 import { ChevronDown, ExternalLink, LineChart } from "lucide-react";
 import type { TickerPosition, TickerResponse } from "@/lib/auto/ticker-snapshot";
 import { useTicker } from "@/components/ticker/TickerProvider";
+import { CopyMintButton } from "@/components/ticker/CopyMintButton";
+import { PositionMiniChart } from "@/components/ticker/PositionMiniChart";
 import { age, arrowOf, mcap, plainSol, shortMint, signedPct, signedSol, toneClass, toneOf, tradeErrorMessage } from "@/components/ticker/format";
 import { submitDemoTrade, submitLiveTrade } from "@/lib/trade-client";
 
-type Props = { p: TickerPosition; bot: TickerResponse["bot"]; uiMode: "demo" | "real" | null };
+type Props = {
+  p: TickerPosition;
+  bot: TickerResponse["bot"];
+  uiMode: "demo" | "real" | null;
+  marketLive: boolean;
+};
 
 /**
  * One open position. The header is a 44px-tall button that expands the row in
@@ -16,19 +23,26 @@ type Props = { p: TickerPosition; bot: TickerResponse["bot"]; uiMode: "demo" | "
  * /wallet does: demo -> /api/trade/demo, real -> /api/trade/quick-sell. Both are
  * queued for the WORKER to execute; nothing trades from the browser.
  */
-export function PositionRow({ p, bot, uiMode }: Props) {
-  const { now, refresh, setTarget, target } = useTicker();
+export function PositionRow({ p, bot, uiMode, marketLive }: Props) {
+  const { now, refresh, seriesForPosition, setTarget, target } = useTicker();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const panelId = useId();
 
   const tone = toneOf(p.pnlSol);
-  const label = p.symbol ?? shortMint(p.mint);
-  const onChart = target.kind === "position" && target.mint === p.mint;
+  const label = p.name?.trim() || p.symbol?.trim() || "Unknown token";
+  const identity = p.symbol?.trim() && p.symbol.trim() !== label ? `$${p.symbol.trim()} · ${shortMint(p.mint)}` : shortMint(p.mint);
+  const currentMarketData = marketLive && p.currentMcapUsd != null;
+  const onChart = target.kind === "position" && target.id === p.id;
+  const marketSeries = seriesForPosition(p.id);
 
   async function sell() {
     if (busy) return;
+    if (uiMode !== "real" && p.strategyName && (p.pnlSol == null || p.currentVSol == null)) {
+      setErr("Waiting for this strategy's current pool price. Sell is available as soon as the mark is fresh.");
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
@@ -61,14 +75,17 @@ export function PositionRow({ p, bot, uiMode }: Props) {
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           aria-controls={panelId}
-          className="flex min-h-11 flex-1 cursor-pointer items-center gap-3 px-3 py-2 text-left hover:bg-panel2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:bg-panel2"
+          className="relative flex min-h-11 flex-1 cursor-pointer items-center gap-3 overflow-hidden px-3 py-2 text-left hover:bg-panel2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent active:bg-panel2"
         >
+          <PositionMiniChart series={marketSeries} />
           <ChevronDown size={16} aria-hidden="true" className={`shrink-0 text-muted transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`} />
           <span className="block min-w-0 flex-1">
             <span className="flex items-center gap-2">
               <span className="truncate font-semibold tracking-tight">{label}</span>
-              <span className="text-xs text-muted tabular-nums">{plainSol(p.sizeSol)}</span>
+              <span className="pill shrink-0 text-[10px] uppercase tracking-wide text-muted">{p.source === "live" ? "Real" : "Paper"}</span>
             </span>
+            <span className="mt-0.5 block truncate text-xs text-muted">{identity} · {plainSol(p.sizeSol)}</span>
+            {p.strategyName && <span className="mt-1 block text-xs text-accent">{p.strategyName}{p.added ? " · second tranche added" : ""}{p.researchStatus === "CENSORED" ? " · CENSORED (unpriced)" : ""}</span>}
             <span className="mt-0.5 block text-xs text-muted tabular-nums">
               MC {mcap(p.entryMcapUsd)} <span aria-hidden="true">{"→"}</span>
               <span className="sr-only"> now </span> {mcap(p.currentMcapUsd)} · {age(p.openedAt, now)}
@@ -82,6 +99,7 @@ export function PositionRow({ p, bot, uiMode }: Props) {
             <span className="block text-xs">{signedPct(p.pctOfSize)}</span>
           </span>
         </button>
+        <CopyMintButton mint={p.mint} tokenLabel={label} className="my-2 px-2" />
         <button
           type="button"
           onClick={() => void sell()}
@@ -101,22 +119,28 @@ export function PositionRow({ p, bot, uiMode }: Props) {
       )}
 
       <div id={panelId} hidden={!open} className="bg-bg/40 px-3 pb-3 pt-1">
+        {p.strategyReason && <p className="my-2 text-xs text-accent">Entry: {p.strategyReason}</p>}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
-          <Field k="Entry price" v={p.entryVSol != null ? `${p.entryVSol.toFixed(2)} vSOL` : "—"} />
-          <Field k="Current price" v={p.currentVSol != null ? `${p.currentVSol.toFixed(2)} vSOL` : "—"} />
           <Field k="Entry market cap" v={mcap(p.entryMcapUsd)} />
           <Field k="Current market cap" v={mcap(p.currentMcapUsd)} />
           <Field k="Position size" v={plainSol(p.sizeSol)} />
           <Field k="P&L" v={`${signedSol(p.pnlSol, 4)} (${signedPct(p.pctOfSize)})`} cls={toneClass(tone)} />
-          <Field k="Age" v={age(p.openedAt, now)} />
+          <Field k="Open for" v={age(p.openedAt, now)} />
+          <Field k="Market feed" v={currentMarketData ? "Live" : "Waiting for current price"} cls={currentMarketData ? "text-ok" : "text-warn"} />
           <Field k="Take-profit / stop-loss" v={`+${(bot.takeProfitPct * 100).toFixed(0)}% / -${(bot.stopLossPct * 100).toFixed(0)}%`} />
           <Field k="Max hold" v={`${bot.maxHoldMinutes} min`} />
-          <Field k="Mint" v={shortMint(p.mint)} title={p.mint} />
+          <Field k="Coin address" v={shortMint(p.mint)} title={p.mint} />
         </dl>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => setTarget(onChart ? { kind: "portfolio" } : { kind: "position", mint: p.mint, symbol: p.symbol })}
+            onClick={() =>
+              setTarget(
+                onChart
+                  ? { kind: "portfolio" }
+                  : { kind: "position", id: p.id, mint: p.mint, symbol: p.symbol },
+              )
+            }
             aria-pressed={onChart}
             className="btn btn-ghost inline-flex min-h-11 cursor-pointer items-center gap-1.5 px-3 text-xs"
           >

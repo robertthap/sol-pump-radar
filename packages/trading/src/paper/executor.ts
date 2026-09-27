@@ -253,6 +253,7 @@ export async function closePosition(
   const before = await db.execute(sql`
     SELECT id::text AS id, mint, state, entry_price::float8 AS entry_price,
       quantity::float8 AS quantity, notional_sol::float8 AS notional_sol,
+      entry_features,
       session_id::text AS session_id
     FROM paper_positions
     WHERE id = ${intent.positionId.toString()}::bigint
@@ -261,9 +262,11 @@ export async function closePosition(
     rows: Array<{
       id: string; mint: string; state: string; entry_price: number; quantity: number;
       notional_sol: number; session_id: string;
+      entry_features: Record<string, unknown> | null;
     }>;
   }).rows[0];
   if (!row) return { ok: false, code: "NOT_FOUND", reason: `position ${intent.positionId} missing` };
+  if (row.entry_features?.research_strategy) return { ok: false, code: "STRATEGY_MANAGED", reason: "This research position uses its frozen strategy exit; generic price-proxy closes are disabled." };
   if (row.state !== "OPEN") {
     return { ok: false, code: "BAD_STATE", reason: `cannot close from ${row.state}` };
   }
@@ -571,6 +574,12 @@ export async function markToMarket(resolvePrice: PriceResolver): Promise<{
   type Update = { id: bigint; current: number; unrealized: number };
   const updates: Update[] = [];
   for (const p of open) {
+    if ((p.entryFeatures as Record<string,unknown> | null)?.research_strategy) {
+      const f = p.entryFeatures as Record<string,unknown>;
+      updates.push({ id: p.id, current: p.currentPrice ?? p.entryPrice,
+        unrealized: typeof f.research_mark_pnl === "number" ? f.research_mark_pnl : 0 });
+      continue;
+    }
     const q = await resolvePrice(p.mint).catch(() => null);
     if (!q || !Number.isFinite(q.price) || q.price <= 0) continue;
     updates.push({
@@ -594,8 +603,8 @@ export async function markToMarket(resolvePrice: PriceResolver): Promise<{
     await client.query(
       `UPDATE paper_portfolio
        SET unrealized_pnl_sol = $1,
-           equity_sol = balance_sol + $1,
-           peak_equity_sol = GREATEST(peak_equity_sol, balance_sol + $1),
+           equity_sol = balance_sol + $1 + (SELECT COALESCE(sum(notional_sol),0) FROM paper_positions WHERE state='OPEN'),
+           peak_equity_sol = GREATEST(peak_equity_sol, balance_sol + $1 + (SELECT COALESCE(sum(notional_sol),0) FROM paper_positions WHERE state='OPEN')),
            updated_at = now()
        WHERE id = 1`,
       [totalUnrealized],

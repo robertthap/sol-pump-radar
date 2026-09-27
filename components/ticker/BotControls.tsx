@@ -3,8 +3,10 @@
 import { useEffect, useId, useState } from "react";
 import { useTicker } from "@/components/ticker/TickerProvider";
 import { useTradingMode } from "@/components/TradingModeProvider";
-import { submitAutoQuickStart, submitAutoStop } from "@/lib/trade-client";
+import { submitAutoQuickStart, submitAutoStop, submitSellAll } from "@/lib/trade-client";
 import { plainSol } from "@/components/ticker/format";
+import { STRATEGIES, type ExecutionSetting } from "@/lib/strategies/catalog";
+import { researchStrategy } from "@/lib/strategies/bot-config";
 
 /**
  * Start / stop the EXISTING auto-trader and set its session-start limits.
@@ -18,7 +20,7 @@ import { plainSol } from "@/components/ticker/format";
  * are requests, not authority. Nothing here bypasses the breaker, the daily
  * cap, the live gate, the vault, or the worker.
  */
-type Preset = "balanced" | "conservative" | "aggressive" | "scalp" | "momentum" | "smartMoney" | "compounder" | "curveLadder";
+type Preset = "balanced" | "conservative" | "aggressive" | "scalp" | "momentum" | "smartMoney" | "compounder" | "curveLadder" | "graduation" | "scaleIn";
 
 const RANGES = {
   sizeSol: { min: 0.001, max: 5, hint: "0.001 - 5 SOL" },
@@ -33,7 +35,9 @@ export function BotControls() {
   const running = bot?.running ?? false;
   const uiMode = data?.status.uiMode ?? null;
 
-  const [preset, setPreset] = useState<Preset>("balanced");
+  const [preset, setPreset] = useState<Preset>("curveLadder");
+  const [execution, setExecution] = useState<ExecutionSetting>("BASE");
+  const research = researchStrategy(preset);
   const [size, setSize] = useState("");
   const [cap, setCap] = useState("");
   const [maxPos, setMaxPos] = useState("");
@@ -52,7 +56,7 @@ export function BotControls() {
 
   function validate(): { sizeSol: number; maxDailyLossSol: number; maxConcurrent: number } | null {
     const next: typeof errors = {};
-    const s = Number(size);
+    const s = research ? STRATEGIES[research].size : Number(size);
     const c = Number(cap);
     const m = Number(maxPos);
     if (!Number.isFinite(s) || s < RANGES.sizeSol.min || s > RANGES.sizeSol.max) next.size = `Enter a size between ${RANGES.sizeSol.hint}.`;
@@ -75,6 +79,7 @@ export function BotControls() {
     if (busy) return;
     const v = validate();
     if (!v) return;
+    if (research && uiMode !== "demo") { setMsg({ tone: "bad", text: "Choose a Demo wallet to run these paper-only research strategies." }); return; }
     if (uiMode === "real") {
       const ok = window.confirm(
         `Start REAL auto-trading - the bot places on-chain trades with real SOL.\n\n` +
@@ -86,7 +91,7 @@ export function BotControls() {
     setBusy("start");
     setMsg(null);
     try {
-      const j = await submitAutoQuickStart({ preset, ...v });
+      const j = await submitAutoQuickStart({ preset, ...v, researchExecution: execution });
       if (!j.ok) setMsg({ tone: "bad", text: `Start failed: ${j.error ?? "unknown"}. Check the worker is running and try again.` });
       else setMsg({ tone: "ok", text: `Bot started - ${v.sizeSol} SOL per trade, up to ${v.maxConcurrent} open.` });
       await Promise.all([refresh(), refreshMode({ force: true })]);
@@ -102,9 +107,18 @@ export function BotControls() {
     setBusy("stop");
     setMsg(null);
     try {
+      const sold = await submitSellAll({ scope: "all" });
+      if (!sold.ok || sold.failedCount > 0) {
+        setMsg({
+          tone: "bad",
+          text: `Could not close every position (${sold.closedCount} closed, ${sold.failedCount} failed). The bot is still running so positions remain managed.`,
+        });
+        await refresh();
+        return;
+      }
       const j = await submitAutoStop("ticker_stop");
       if (!j.ok) setMsg({ tone: "bad", text: `Stop failed: ${j.error ?? "unknown"}. Try again.` });
-      else setMsg({ tone: "ok", text: "Bot stopped. Open positions stay managed until they close." });
+      else setMsg({ tone: "ok", text: `Bot stopped. ${sold.closedCount} open position${sold.closedCount === 1 ? "" : "s"} closed.` });
       await Promise.all([refresh(), refreshMode({ force: true })]);
     } catch (e) {
       setMsg({ tone: "bad", text: `Stop failed: ${e instanceof Error ? e.message : String(e)}` });
@@ -134,11 +148,22 @@ export function BotControls() {
         </p>
       )}
 
-      <StrategySelect />
+      <fieldset className="mb-4 space-y-2" disabled={running || busy != null}>
+        <legend className="mb-2 text-sm font-semibold">Select bot strategy</legend>
+        {(["curveLadder", "graduation", "scaleIn"] as const).map((strategy) => {
+          const selectedStrategy = running ? bot?.researchStrategy === strategy : preset === strategy;
+          return <label key={strategy} className={`flex min-h-14 cursor-pointer items-start gap-2 rounded-lg border p-3 ${selectedStrategy ? "border-accent bg-accent/10" : "border-border bg-bg"} ${running ? "cursor-default" : ""}`}>
+            <input className="mt-1 accent-emerald-500" type="radio" name="research-bot-strategy" value={strategy} checked={selectedStrategy} onChange={() => setPreset(strategy)} />
+            <span><span className="block text-sm font-semibold">{STRATEGIES[strategy].name}</span><span className="mt-1 block text-xs text-muted">{strategy === "graduation" ? "After graduation · 0.552 SOL · tree exit" : strategy === "curveLadder" ? "Curve crossings · 0.349 SOL · 31s exit" : "Curve Ladder entry + one 0.349 SOL add"}</span></span>
+          </label>;
+        })}
+        <p className="text-xs text-muted">Runs on the current market feed with your Demo balance. Trades, entry reasons and profit/loss appear here.</p>
+      </fieldset>
 
       {running && bot ? (
         <>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <RO k="Strategy" v={bot.researchStrategy && researchStrategy(bot.researchStrategy) ? STRATEGIES[researchStrategy(bot.researchStrategy)!].name : bot.presetName ?? "Standard bot"} />
             <RO k="Per trade" v={plainSol(bot.sizeSol)} />
             <RO k="Daily loss cap" v={`${plainSol(bot.maxDailyLossSol, 2)} · used ${plainSol(bot.todayLossSol, 3)}`} />
             <RO
@@ -146,7 +171,7 @@ export function BotControls() {
               v={`${bot.effectiveMaxConcurrent}${bot.maxConcurrent !== bot.effectiveMaxConcurrent ? ` (you asked ${bot.maxConcurrent}; PAPER_MAX_OPEN_POSITIONS=${bot.maxConcurrentCeiling} caps it)` : ""}`}
               cls={bot.maxConcurrent !== bot.effectiveMaxConcurrent ? "text-warn" : undefined}
             />
-            <RO k="Exit rules" v={`TP +${(bot.takeProfitPct * 100).toFixed(0)}% · SL -${(bot.stopLossPct * 100).toFixed(0)}% · ${bot.maxHoldMinutes} min hold`} />
+            <RO k="Exit rules" v={bot.researchStrategy ? (bot.researchStrategy === "graduation" ? "Frozen exit tree / 600s" : "31s / graduation") : `TP +${(bot.takeProfitPct * 100).toFixed(0)}% · SL -${(bot.stopLossPct * 100).toFixed(0)}% · ${bot.maxHoldMinutes} min hold`} />
             <RO
               k="Flat-position cut"
               v={
@@ -206,7 +231,45 @@ export function BotControls() {
           }}
           noValidate
         >
-          <Num id={ids.size} label="Per trade limit" unit="SOL" value={size} onChange={setSize} onBlur={() => validate()} step="0.001" hint={RANGES.sizeSol.hint} error={errors.size} />
+          <details>
+            <summary className="cursor-pointer text-xs text-muted">Other bot presets</summary>
+            <label htmlFor={ids.preset} className="mb-1 block text-xs text-muted">
+              Strategy
+            </label>
+            <select
+              id={ids.preset}
+              value={preset}
+              onChange={(e) => setPreset(e.target.value as Preset)}
+              className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <option value="compounder">Compounder ($2 a trade, fast)</option>
+              <option value="curveLadder">Curve Ladder · paper</option>
+              <option value="graduation">Graduation Scout (V1) · paper</option>
+              <option value="scaleIn">Winner Scale-In · paper</option>
+              <option value="balanced">Balanced</option>
+              <option value="conservative">Conservative</option>
+              <option value="aggressive">Aggressive</option>
+              <option value="scalp">Scalp (fast turnover)</option>
+              <option value="momentum">Momentum (only accelerating coins)</option>
+              <option value="smartMoney">Smart Money (only when watched wallets buy)</option>
+            </select>
+            <p className="mt-1 text-xs text-muted">
+              {research
+                ? `${STRATEGIES[research].description} ${research === "scaleIn" ? "Bot baseline: Curve Ladder entries, so compare it against a Curve Ladder session." : ""}`
+                : preset === "compounder"
+                ? "Targets a fixed $2 per trade on a 0.1 SOL stake (+13.3% net after all fees — break-even alone is +2%), stop at −6%, cuts anything flat at 3 min, 10 min max hold, 10 slots. Only buys in the vSol 20–70 curve band, where better wallets actually operate and where our own trades hit +13.3% about twice as often. Needs a 31% win rate to break even; measured so far is 12–16%. UNPROVEN — trading faster multiplies whatever the expectancy is, including a negative one."
+                : preset === "scalp"
+                ? "Small profits, fast slots: banks half at +5%, trails from +6%, cuts anything still flat at 5 min, max 12 min hold. Unproven — being measured."
+                : preset === "momentum"
+                  ? "Only enters coins whose trading is accelerating with buyers on top (≥8 buys/5m, buys ≥ sells, volume running ≥1.5× its hourly pace). Exits match Balanced, so selection is the only difference. Expect far fewer trades. Unproven — being measured."
+                  : preset === "smartMoney"
+                    ? "Only enters when a wallet from your watchlist — or two wallets our stats rate as having an edge — is buying. Exits match Balanced. Expect very few trades: we only see bonding-curve activity, so a watched wallet buying an already-graduated coin is invisible to us. Unproven — being measured."
+                    : "Sets take-profit, stop-loss and hold time. Your limits above override its size and cap."}
+            </p>
+          </details>
+          {research && <p className="text-xs text-muted">{STRATEGIES[research].description}</p>}
+          {!research && <StrategySelect />}
+          {research ? <p className="rounded-md bg-panel2 p-2 text-xs">Fixed stake: <strong>{STRATEGIES[research].size} SOL</strong>{research === "scaleIn" ? " + one 0.349 SOL add" : ""}. Frozen research rules; paper only.</p> : <Num id={ids.size} label="Per trade limit" unit="SOL" value={size} onChange={setSize} onBlur={() => validate()} step="0.001" hint={RANGES.sizeSol.hint} error={errors.size} />}
           <Num id={ids.cap} label="Daily loss cap" unit="SOL" value={cap} onChange={setCap} onBlur={() => validate()} step="0.01" hint={RANGES.maxDailyLossSol.hint} error={errors.cap} />
           <Num
             id={ids.maxPos}
@@ -218,39 +281,8 @@ export function BotControls() {
             hint={bot ? `1 - ${Math.min(RANGES.maxConcurrent.max, bot.maxConcurrentCeiling)} (ceiling set by PAPER_MAX_OPEN_POSITIONS)` : RANGES.maxConcurrent.hint}
             error={errors.maxPos}
           />
-          <div>
-            <label htmlFor={ids.preset} className="mb-1 block text-xs text-muted">
-              Risk preset
-            </label>
-            <select
-              id={ids.preset}
-              value={preset}
-              onChange={(e) => setPreset(e.target.value as Preset)}
-              className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-            >
-              <option value="compounder">Compounder ($2 a trade, fast)</option>
-              <option value="curveLadder">Curve Ladder (replication test)</option>
-              <option value="balanced">Balanced</option>
-              <option value="conservative">Conservative</option>
-              <option value="aggressive">Aggressive</option>
-              <option value="scalp">Scalp (fast turnover)</option>
-              <option value="momentum">Momentum (only accelerating coins)</option>
-              <option value="smartMoney">Smart Money (only when watched wallets buy)</option>
-            </select>
-            <p className="mt-1 text-xs text-muted">
-              {preset === "curveLadder"
-                ? "A replication of a published curve entry rule, run to check its NEGATIVE result — not to make money. Buys 0.349 SOL when the curve crosses 5/10/15/20/25/30/40/50/65 SOL with a small crossing trade, spread-out buyers and a fast climb; out after 31 seconds. Offline on our own 7 days it fired 29 times in 10,507 chances (0.28%), never below the 30 SOL rung, and averaged −9.2% net. Expect almost no trades."
-                : preset === "compounder"
-                ? "Targets a fixed $2 per trade on a 0.1 SOL stake (+13.3% net after all fees — break-even alone is +2%), stop at −6%, cuts anything flat at 3 min, 10 min max hold, 10 slots. Only buys in the vSol 20–70 curve band, where better wallets actually operate and where our own trades hit +13.3% about twice as often. Needs a 31% win rate to break even; measured so far is 12–16%. UNPROVEN — trading faster multiplies whatever the expectancy is, including a negative one."
-                : preset === "scalp"
-                ? "Small profits, fast slots: banks half at +5%, trails from +6%, cuts anything still flat at 5 min, max 12 min hold. Unproven — being measured."
-                : preset === "momentum"
-                  ? "Only enters coins whose trading is accelerating with buyers on top (≥8 buys/5m, buys ≥ sells, volume running ≥1.5× its hourly pace). Exits match Balanced, so selection is the only difference. Expect far fewer trades. Unproven — being measured."
-                  : preset === "smartMoney"
-                    ? "Only enters when a wallet from your watchlist — or two wallets our stats rate as having an edge — is buying. Exits match Balanced. Expect very few trades: we only see bonding-curve activity, so a watched wallet buying an already-graduated coin is invisible to us. Unproven — being measured."
-                    : "Sets take-profit, stop-loss and hold time. Your limits above override its size and cap."}
-            </p>
-          </div>
+
+          {research && <label className="block text-xs text-muted">Execution costs<select className="mt-1 min-h-11 w-full rounded-md px-3 text-sm" value={execution} onChange={(e) => setExecution(e.target.value as ExecutionSetting)}><option>OPTIMISTIC</option><option>BASE</option><option>CONSERVATIVE</option></select></label>}
           <button
             type="submit"
             disabled={busy != null || halted || offline || !data}
@@ -267,6 +299,15 @@ export function BotControls() {
           {msg.text}
         </p>
       )}
+      {bot?.researchStrategy && <div className="mt-4 space-y-2 border-t border-border pt-3 text-xs">
+        <h3 className="font-semibold">Strategy activity</h3>
+        <p className="text-muted" role="status">{bot.researchStatus ?? "Waiting for the worker"}</p>
+        {bot.research && <>
+          <p>{bot.research.performance.closed} closed · {bot.research.performance.wins} wins · {bot.research.performance.censored} censored</p>
+          <p className="text-muted">{bot.research.counts.map((c) => `${c.status}: ${c.count}`).join(" · ")}</p>
+          <div className="max-h-48 space-y-2 overflow-y-auto">{bot.research.recent.map((r, i) => <div key={`${r.mint}-${i}`} className="rounded-md bg-panel2 p-2"><p className="font-medium">{r.mint.slice(0,7)}… · {r.status}</p><p className="mt-1 text-muted">{r.reason}</p></div>)}</div>
+        </>}
+      </div>}
     </section>
   );
 }
@@ -315,7 +356,7 @@ function StrategySelect() {
   return (
     <div className="mb-3">
       <label htmlFor={id} className="mb-1 block text-xs text-muted">
-        Strategy
+        Signal source
       </label>
       <select
         id={id}
@@ -331,7 +372,7 @@ function StrategySelect() {
         <option value="profit">Profit</option>
       </select>
       <p id={`${id}-hint`} className="mt-1 text-xs text-muted">
-        {STRATEGY_HELP[current]} Takes effect within ~8 s, bot running or not.
+        {STRATEGY_HELP[current]} Feeds standard presets. Research strategies consume their own event stream. Takes effect within ~8 s.
       </p>
       {err && (
         <p className="mt-1 text-xs text-bad" role="alert">

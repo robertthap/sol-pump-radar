@@ -9,8 +9,9 @@ const WalletPage = dynamic(
 
 export default function Page() {
   return (
-    <main className="app-page">
+    // A div, not <main>: PortalLayout already renders the page's single <main> landmark.
+    <div className="app-page">
       <WalletPage />
-    </main>
+    </div>
   );
 }

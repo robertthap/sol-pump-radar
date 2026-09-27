@@ -20,6 +20,17 @@ build
 apps/worker/data/
 sessions/
 coverage/
+# Scratch output from one-off tooling run inside the repo root. Anchored, so a
+# source dir named output/ elsewhere is still tracked. These reached the index
+# once via `git add -A` and carried unrelated binaries into a branch.
+/output/
+/outputs/
+# Generator for /outputs/risk_matrix; imports from a machine-local runtime cache
+# and is unrelated to this app. Kept on disk, out of the repo.
+/build_risk_matrix.mjs
+
+__pycache__/
+*.pyc
 
 .DS_Store
 .idea/

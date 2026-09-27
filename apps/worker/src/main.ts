@@ -15,6 +15,7 @@ import { startPaperTradeListener } from "@/lib/workers/paper-trade-listener";
 import { startDemoResetListener } from "@/lib/workers/demo-reset-listener";
 import { startWebCommandListener } from "@/lib/workers/web-command-listener";
 import { startPhantomLiveListener } from "@/lib/workers/phantom-live-listener";
+import { startLiveSettlementLane } from "@/lib/workers/live-settlement";
 import { startRuntimeSnapshotWriter } from "@/lib/runtime/runtime-snapshot";
 import { bootWorkerWallet } from "@/lib/wallet/worker-vault";
 import { acquireWorkerSingleton, releaseWorkerSingleton } from "@/lib/runtime/worker-lock";
@@ -104,6 +105,9 @@ async function main() {
 
   console.log("[worker] starting phantom live listener…");
   stops.push(startPhantomLiveListener());
+
+  console.log("[worker] starting live settlement lane…");
+  stops.push(startLiveSettlementLane());
 
   console.log("[worker] starting runtime snapshot writer…");
   stops.push(startRuntimeSnapshotWriter());

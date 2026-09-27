@@ -1,6 +1,8 @@
 import "server-only";
 
 import { fetchPumpJson, PUMP_TRADE_TIMEOUT_MS } from "@/lib/pump/fetch-json";
+import { BoundedMap } from "@/lib/shared/bounded-map";
+import { effectiveVSolFromReserves } from "@/lib/pump/pumpswap-parser";
 
 const BASE = "https://frontend-api-v3.pump.fun";
 /** pump.fun bonding curve graduates around this SOL level */
@@ -17,6 +19,7 @@ export type PumpFunCoinRaw = {
   indexed_by_pump?: boolean;
   real_sol_reserves?: number;
   virtual_sol_reserves?: number;
+  virtual_token_reserves?: number;
   real_quote_reserves?: number;
   virtual_quote_reserves?: number;
   market_cap?: number;
@@ -63,25 +66,28 @@ export function isPumpFunCoin(c: PumpFunCoinRaw): boolean {
   return false;
 }
 
+/**
+ * Curve-equivalent vSol from the API's VIRTUAL reserves (price = virtual SOL /
+ * virtual tokens), converted the same way as the on-chain paths (lib/pump/parser,
+ * lib/pricing/live-price). The previous version returned the REAL SOL reserve
+ * first — 0-85 SOL, a different scale from the virtual 30-115 every consumer
+ * expects — and trend-scanner wrote that into events.v_sol_after.
+ */
 export function pumpFunVSol(c: PumpFunCoinRaw): number | null {
-  const lamports =
-    c.real_sol_reserves ??
-    c.real_quote_reserves ??
-    c.virtual_sol_reserves ??
-    c.virtual_quote_reserves ??
-    null;
-  if (lamports == null || lamports <= 0) return null;
-  return lamports / 1e9;
+  if (c.virtual_sol_reserves == null || c.virtual_token_reserves == null) return null;
+  return effectiveVSolFromReserves(c.virtual_sol_reserves / 1e9, c.virtual_token_reserves);
 }
 
-function bondingPct(vSol: number | null, complete: boolean): number | null {
+/** Bonding progress from the REAL SOL reserve, which is what reaches ~85 SOL at graduation. */
+function bondingPct(realSol: number | null, complete: boolean): number | null {
   if (complete) return 100;
-  if (vSol == null) return null;
-  return Math.min(100, (vSol / PUMP_GRADUATION_SOL) * 100);
+  if (realSol == null) return null;
+  return Math.min(100, (realSol / PUMP_GRADUATION_SOL) * 100);
 }
 
 function normalize(c: PumpFunCoinRaw): PumpFunCoin {
   const vSol = pumpFunVSol(c);
+  const realSol = c.real_sol_reserves != null ? c.real_sol_reserves / 1e9 : null;
   const complete = Boolean(c.complete);
   return {
     mint: c.mint,
@@ -101,7 +107,7 @@ function normalize(c: PumpFunCoinRaw): PumpFunCoin {
     replyCount: c.reply_count ?? 0,
     raydiumPool: c.raydium_pool ?? null,
     athMarketCap: c.ath_market_cap ?? null,
-    bondingPct: bondingPct(vSol, complete),
+    bondingPct: bondingPct(realSol, complete),
   };
 }
 
@@ -109,28 +115,37 @@ function normalize(c: PumpFunCoinRaw): PumpFunCoin {
 // for every open position each exit tick (plus once at entry); without this the
 // pump API gets hammered and rate-limits to nulls. 8s is fresh enough for mcap
 // display/exit, and we serve the last good value on a transient error.
-const coinCache = new Map<string, { coin: PumpFunCoin | null; ts: number }>();
+// Bounded, oldest-evicted: the old cache cleared EVERY entry once it reached its
+// cap, so a busy entry scan wiped the values open positions were being served from.
+const coinCache = new BoundedMap<string, { coin: PumpFunCoin | null; ts: number }>(1_000);
 const COIN_CACHE_TTL_MS = 8_000;
-const COIN_CACHE_MAX = 1_000;
+/** How long a last-good coin may stand in for failed or unusable responses. */
+const COIN_STALE_MAX_MS = 60_000;
 
 export async function fetchPumpFunCoin(mint: string): Promise<PumpFunCoin | null> {
   const cached = coinCache.get(mint);
   const now = Date.now();
   if (cached && now - cached.ts < COIN_CACHE_TTL_MS) return cached.coin;
+  const lastGood = cached?.coin != null && now - cached.ts < COIN_STALE_MAX_MS ? cached.coin : null;
   try {
     const raw = await fetchPumpJson<PumpFunCoinRaw>(
       `${BASE}/coins/${encodeURIComponent(mint)}`,
       PUMP_TRADE_TIMEOUT_MS,
     );
-    const coin = isPumpFunCoin(raw) ? normalize(raw) : null;
-    if (coinCache.size >= COIN_CACHE_MAX) coinCache.clear();
+    if (!isPumpFunCoin(raw)) {
+      // An unusable body for a coin we just had (rate-limit or error payload with a
+      // 200) must not replace the good value with null.
+      if (lastGood) return lastGood;
+      coinCache.set(mint, { coin: null, ts: now });
+      return null;
+    }
+    const coin = normalize(raw);
     coinCache.set(mint, { coin, ts: now });
     return coin;
   } catch {
-    // Serve the last good value through transient errors/rate limits rather than
-    // null-flapping (which would drop us back to the curve estimate).
-    if (cached) return cached.coin;
-    return null;
+    // Serve the last good value through transient errors/rate limits, for a bounded
+    // time, rather than null-flapping.
+    return lastGood;
   }
 }
 
@@ -157,12 +172,6 @@ export async function fetchPumpFunCoins(opts?: {
     opts?.timeoutMs,
   );
   return raw.filter(isPumpFunCoin).map(normalize);
-}
-
-function dedupeCoins(coins: PumpFunCoin[]): PumpFunCoin[] {
-  const m = new Map<string, PumpFunCoin>();
-  for (const c of coins) m.set(c.mint, c);
-  return [...m.values()];
 }
 
 export type TrenchesFeed = {

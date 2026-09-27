@@ -6,7 +6,7 @@ import { WsLogsSubscriber, type ReconnectInfo } from "@/lib/rpc/ws-manager";
 import { parseProgramLogs, type ParsedPumpEvent, type ParsedCreateEvent } from "@/lib/pump/parser";
 import { PUMP_BONDING_CURVE_PROGRAM, PUMP_SWAP_AMM_PROGRAM } from "@/lib/pump/program";
 import { parseSwapLogs, enrichSwap, effectiveVSolFromReserves, type RawSwapEvent } from "@/lib/pump/pumpswap-parser";
-import { resolvePoolInfoBatch } from "@/lib/pump/pool-registry";
+import { isPoolResolutionPending, resolvePoolInfoBatch } from "@/lib/pump/pool-registry";
 import { insertEvents, insertSwapEvents, type SwapEventInsert } from "@/lib/db/repos/events";
 import { upsertNewTokens } from "@/lib/db/repos/tokens";
 import { processLaunchHotPipeline } from "@/lib/intelligence/launch-hot";
@@ -26,6 +26,12 @@ const FLUSH_INTERVAL_MS = 500;
 const FLUSH_BATCH_SIZE = 100;
 // Drop-audit batching: emit one INGEST_DROPPED event per N drops to avoid event spam.
 const DROP_AUDIT_BATCH = 100;
+const SWAP_RESOLUTION_MAX_ATTEMPTS = 8;
+const SWAP_RESOLUTION_MAX_AGE_MS = 30_000;
+
+function swapEventKey(raw: RawSwapEvent): string {
+  return `${raw.signature}:${raw.logIndex}`;
+}
 
 export async function startIngestor() {
   const stats = getIngestorStats();
@@ -320,12 +326,16 @@ export async function startIngestor() {
   let swapFlushTimer: NodeJS.Timeout | null = null;
   if (env().PUMPSWAP_INGEST === "on") {
     const swapBuffer: RawSwapEvent[] = [];
+    const swapResolutionRetries = new Map<string, { attempts: number; firstSeenAt: number }>();
     let swapFlushing = false;
 
     async function flushSwaps(): Promise<void> {
       if (swapFlushing || swapBuffer.length === 0) return;
       swapFlushing = true;
-      const batch = swapBuffer.splice(0, Math.min(swapBuffer.length, 300));
+      // Drain rate has to beat the AMM firehose (~200 swaps/s measured), or the
+      // buffer saturates and whole pools disappear from the tape.
+      const batch = swapBuffer.splice(0, Math.min(swapBuffer.length, 1000));
+      const retry: RawSwapEvent[] = [];
       try {
         // Resolve all distinct pools in this batch (cached forever after first hit).
         const pools = batch.map((r) => r.pool);
@@ -333,7 +343,31 @@ export async function startIngestor() {
         const rows: SwapEventInsert[] = [];
         for (const raw of batch) {
           const info = poolInfo.get(raw.pool);
-          if (!info) continue; // unresolved pool (not WSOL-paired, or RPC miss) — skip
+          const key = swapEventKey(raw);
+          if (!info) {
+            if (isPoolResolutionPending(raw.pool)) {
+              const previous = swapResolutionRetries.get(key);
+              const state = {
+                attempts: (previous?.attempts ?? 0) + 1,
+                firstSeenAt: previous?.firstSeenAt ?? Date.now(),
+              };
+              if (
+                state.attempts <= SWAP_RESOLUTION_MAX_ATTEMPTS &&
+                Date.now() - state.firstSeenAt <= SWAP_RESOLUTION_MAX_AGE_MS
+              ) {
+                swapResolutionRetries.set(key, state);
+                retry.push(raw);
+              } else {
+                swapResolutionRetries.delete(key);
+                stats.eventsDropped++;
+              }
+            } else {
+              // Definitive non-WSOL/non-PumpSwap result; it cannot become useful.
+              swapResolutionRetries.delete(key);
+            }
+            continue;
+          }
+          swapResolutionRetries.delete(key);
           const e = enrichSwap(raw, info);
           const vSol = effectiveVSolFromReserves(e.solReserveAfter, e.tokenReserveAfter);
           if (vSol == null) continue;
@@ -361,7 +395,27 @@ export async function startIngestor() {
       } catch (e) {
         log.warn("swap flush error", { err: String(e) });
       } finally {
+        if (retry.length > 0) {
+          // Put the graduation-critical first swaps ahead of newer traffic. They
+          // retain their original chain/local timestamp, so a successful retry
+          // reconstructs the +1s..+5s decision tape without look-ahead data.
+          const room = Math.max(0, MAX_BUFFER - swapBuffer.length);
+          const kept = retry.slice(0, room);
+          swapBuffer.unshift(...kept);
+          if (kept.length < retry.length) {
+            const dropped = retry.length - kept.length;
+            stats.eventsDropped += dropped;
+            for (const raw of retry.slice(kept.length)) {
+              swapResolutionRetries.delete(swapEventKey(raw));
+            }
+            log.warn("PumpSwap retry buffer full; dropping unresolved swaps", { dropped });
+          }
+        }
         swapFlushing = false;
+        // A flush drains at most 1000 events. Without this the remainder waited
+        // for a new WS message to reschedule it, so a backlog that outran the
+        // stream simply sat there — same stall the curve `flush()` avoids.
+        if (swapBuffer.length > 0) scheduleSwapFlush();
       }
     }
     function scheduleSwapFlush() {
@@ -385,7 +439,12 @@ export async function startIngestor() {
         return;
       }
       if (!raws.length) return;
-      if (swapBuffer.length + raws.length > MAX_BUFFER) return; // backpressure
+      if (swapBuffer.length + raws.length > MAX_BUFFER) {
+        // Counted, not silent: the curve path reports its drops and this one did
+        // not, so a saturated swap buffer looked identical to a quiet market.
+        stats.eventsDropped += raws.length;
+        return;
+      }
       swapBuffer.push(...raws);
       if (swapBuffer.length >= FLUSH_BATCH_SIZE) flushSwaps();
       else scheduleSwapFlush();

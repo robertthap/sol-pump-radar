@@ -24,7 +24,7 @@ import { startLabelBuilder } from "./label-builder";
 import { startPostExitPoller } from "./post-exit-poller";
 import { startDriftMonitor } from "./drift-monitor";
 import { touchOrchestratorBoot } from "./heartbeat";
-import { env } from "@/lib/env";
+import { env, shouldResumeSessionOnBoot } from "@/lib/env";
 
 const log = logger("orchestrator");
 
@@ -71,8 +71,14 @@ export async function startWorkers() {
   // auto-trader retiring any active session on boot, so nothing trades (and no browse
   // page acts as a logged-in demo) until the user explicitly chooses. Safe default,
   // and important for live. Only an explicit pick (setMode) re-establishes the mode.
-  const { clearUiTradingMode } = await import("@/lib/db/repos/trading-mode");
-  await clearUiTradingMode().catch(() => undefined);
+  // Exception: a paper session kept alive by RESUME_PAPER_SESSION_ON_BOOT=on keeps
+  // its Demo selection too, or the UI would show a running bot while logged out.
+  const { getActiveSession } = await import("@/lib/db/repos/auto-sessions");
+  const resuming = shouldResumeSessionOnBoot(await getActiveSession().catch(() => null));
+  if (!resuming) {
+    const { clearUiTradingMode } = await import("@/lib/db/repos/trading-mode");
+    await clearUiTradingMode().catch(() => undefined);
+  }
 
   await ensureInitialState();
   touchOrchestratorBoot();

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx --tsconfig ../../tsconfig.cli.json --import ../../scripts/preload-cli.ts src/main.ts",
+    "start": "node --require ../../scripts/preload-windows-userinfo.cjs ../../node_modules/tsx/dist/cli.mjs --tsconfig ../../tsconfig.cli.json --import ../../scripts/preload-cli.ts src/main.ts",
     "typecheck": "tsc --noEmit -p ../../tsconfig.cli.json"
   },
   "dependencies": {
