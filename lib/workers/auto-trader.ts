@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { logger } from "@/lib/log";
-import { env, rpcHttpUrls, activeMintWindowMinutes, autoDemoRelaxEnabled, isLiveAllowed, allowsLaunchTier, isV2SimpleEntry } from "@/lib/env";
+import { env, rpcHttpUrls, activeMintWindowMinutes, autoDemoRelaxEnabled, isLiveAllowed, allowsLaunchTier, shouldResumeSessionOnBoot } from "@/lib/env";
 import { assertLiveExecutionAllowed } from "@/lib/runtime/live-guards";
 import { readState } from "@/lib/circuit-breaker/state";
 import { haltedNow as haltGuard, runHaltShutdown } from "@/lib/workers/halt-guard";
@@ -16,14 +16,15 @@ import {
 import {
   closeLivePosition,
   fetchOpenLivePositions,
-  openLivePosition,
 } from "@/lib/db/repos/live-trades";
 import {
+  accumulateSessionStat,
   getActiveSession,
   markSessionError,
   stopSession,
   updateStats,
   type AutoSessionDto,
+  type SessionCounter,
 } from "@/lib/db/repos/auto-sessions";
 import { recordOutcome } from "@/lib/db/repos/outcomes";
 import { insertPositionMarks, type PositionMarkInsert } from "@/lib/db/repos/position-marks";
@@ -48,18 +49,22 @@ import { coalesceFlowAgeSeconds, resolveTimingAgeSeconds } from "@/lib/trade/tim
 import { fetchDemoAccount, getUiTradingMode } from "@/lib/db/repos/trading-mode";
 import { resolveEntryVSol } from "@/lib/pump/resolve-price";
 import { fetchPumpFunCoin } from "@/lib/pump/fun-api";
-import { mcapUsdFromVSol, effectiveVSolFromMcapUsd } from "@/lib/dex/curve-mcap";
+import { mcapUsdFromVSol } from "@/lib/dex/curve-mcap";
 import { fetchDexMarketBatchCached } from "@/lib/dex/snapshot-cache";
 import { flowThresholdsFor, passesFlowGate, relaxMomentumThresholds } from "@/lib/trade/entry-flow";
 import { meetsSmartMoneyRequirement, smartMoneySignal } from "@/lib/trade/smart-money";
 import { fetchSmartMoneyBuyers } from "@/lib/db/repos/smart-money-buyers";
 import { planProfitTarget } from "@/lib/trade/profit-target";
+import { ladderSignal } from "@/lib/trade/curve-ladder";
+import { fetchLadderFeatures } from "@/lib/db/repos/curve-ladder";
 import { getSolUsdSync } from "@/lib/market/sol-usd";
-import { latestVSolBatch } from "@/lib/db/repos/events";
+import { latestVSolBatch, latestVSolForMint } from "@/lib/db/repos/events";
+import { fetchLivePrice, fetchLivePrices, type LivePrice } from "@/lib/pricing/live-price";
 import { VSOL_MODULE_KEY } from "@/lib/intelligence/scored-mint-adapter";
 import { paperOpen, paperClose, paperPartialClose, getPaperConfig } from "@/lib/paper/engine";
 import { entryHeadroom } from "@/lib/trade/capacity";
 import { decidePaperExit } from "@/lib/paper/exit-decision";
+import { forceCloseCandidateVSol, isOffCurvePosition, selectExitPrice } from "@/lib/pricing/exit-price";
 import { executePaperBuy } from "@/lib/executor/normalizer";
 import {
   buildExecutionPlan,
@@ -72,6 +77,8 @@ import { evaluateKillSwitch } from "@/lib/risk/kill-switch";
 import { getCurrentRegime } from "@/lib/intelligence/regime";
 import { attributePnl, attributionFields } from "@/lib/intelligence/pnl-attribution";
 import { touchWorker } from "@/lib/workers/heartbeat";
+import { recordRadarEvent } from "@/lib/radar/recorder";
+import type { RadarEventStage } from "@/lib/radar/snapshot";
 
 const log = logger("auto-trader");
 const TICK_MS = 3_000;
@@ -80,6 +87,31 @@ let lastPendingFallbackAt = 0;
 // positions from a pre-restart session drain (they self-clear at stagnation/max-hold).
 let lastOrphanWarnAt = 0;
 let lastOrphanCount = -1;
+// Throttle the "graduated position has no price" warning: during a pump.fun outage
+// every open graduated position hits it on every tick.
+let lastUnpricedWarnAt = 0;
+let lastCapacityRadarAt = 0;
+
+/**
+ * With every slot in use the queue is not evaluated at all, so no gate result exists for the waiting BUY decisions.
+ * Record them as skipped for capacity (radar only; reads the same queue without the trading path's fallback).
+ */
+async function recordCapacitySkips(session: AutoSessionDto): Promise<void> {
+  if (Date.now() - lastCapacityRadarAt < 5_000) return;
+  lastCapacityRadarAt = Date.now();
+  const waiting = await fetchPendingBuyDecisions(120, { relaxAutoGate: autoDemoRelaxEnabled() }).catch(() => []);
+  for (const d of waiting) {
+    recordRadarEvent({
+      mint: d.mint,
+      stage: "skipped",
+      subStage: "max_positions",
+      score: d.confluenceScore,
+      detail: "every position slot in use",
+      sessionId: session.id,
+      decisionId: d.id,
+    });
+  }
+}
 
 async function resolvePendingBuyQueue(): Promise<PendingBuyDecisionDto[]> {
   const queueOpts = { relaxAutoGate: autoDemoRelaxEnabled() };
@@ -128,10 +160,6 @@ function isStrictAllowed(d: PendingBuyDecisionDto): boolean {
 /** Stable strict-first ordering so strict entries consume capacity before relaxed. */
 function strictFirst(items: PendingBuyDecisionDto[]): PendingBuyDecisionDto[] {
   return [...items].sort((a, b) => Number(isStrictAllowed(b)) - Number(isStrictAllowed(a)));
-}
-
-async function latestVSolFor(mint: string): Promise<number | null> {
-  return resolveEntryVSol(mint);
 }
 
 /** Trailing consecutive-loss streak for a session's most recent paper closes. */
@@ -183,9 +211,15 @@ export async function startAutoTrader() {
   // 'active' before this worker (re)started. Retire it so the bot stays OFF until the
   // user explicitly presses Start (this also clears the home "session running" prompt,
   // since that reflects an active session). Safe direction — and essential for live.
+  // Exception, opt-in: RESUME_PAPER_SESSION_ON_BOOT=on keeps a PAPER session running
+  // so an evaluation survives crashes and supervisor restarts. Live is always retired.
   try {
     const prior = await getActiveSession();
-    if (prior) {
+    if (prior && shouldResumeSessionOnBoot(prior)) {
+      log.info("resumed paper session left active before restart (RESUME_PAPER_SESSION_ON_BOOT=on)", {
+        sessionId: prior.id,
+      });
+    } else if (prior) {
       await stopSession("worker_restart");
       log.info("retired session left active before restart — auto-trade off until Start", {
         mode: prior.mode,
@@ -338,36 +372,36 @@ async function todayLossSol(session: AutoSessionDto): Promise<number> {
 }
 
 /**
- * Current vSol for an OPEN position, graduation-aware. On the bonding curve we use
- * our on-chain resolver (events.v_sol_after). Once a coin graduates that value
- * freezes (we stop seeing pump.fun curve trades), so we derive an effective vSol
- * from the live DEX market cap (pump usdMarketCap) — keeping PnL + exit decisions
- * tracking the real post-graduation price instead of stalling at ~breakeven.
+ * Current vSol for an OPEN position, from the chain (lib/pricing/live-price.ts): a
+ * curve coin's bonding-curve reserves, or a graduated coin's PumpSwap pool price on
+ * the same scale. Entry fills come from the same source (lib/paper/price-resolver),
+ * so the curve model's (current / entry)² is exact in SOL.
+ *
+ * An off-curve position is priced from its pool or not at all
+ * (lib/pricing/exit-price.ts). The ingested curve price is a fallback only for an
+ * on-curve position whose live read failed.
  */
-async function resolveCurrentForExit(
-  mint: string,
-): Promise<{ vSol: number | null; graduated: boolean; mcapUsd: number | null; lastTradeAt: string | null }> {
-  const events = await latestVSolFor(mint);
-  let coin: Awaited<ReturnType<typeof fetchPumpFunCoin>> = null;
-  try {
-    coin = await fetchPumpFunCoin(mint);
-  } catch {
-    /* offline / non-pump — fall back to on-chain events */
-  }
-  const mcapUsd =
-    coin?.usdMarketCap != null && Number.isFinite(coin.usdMarketCap) && coin.usdMarketCap > 0
-      ? coin.usdMarketCap
-      : null;
-  const graduated = (coin?.bondingPct ?? 0) >= 100 || coin?.complete === true;
-  // Carried for position marks: for a graduated coin this is the only "is anyone
-  // still trading it" signal we have, since its trades are on PumpSwap and never
-  // reach `events`. Free — the pump.fun fetch above is already cached 8s.
-  const lastTradeAt = coin?.lastTradeAt ?? null;
-  if (graduated) {
-    const eff = effectiveVSolFromMcapUsd(mcapUsd);
-    if (eff != null) return { vSol: eff, graduated: true, mcapUsd, lastTradeAt };
-  }
-  return { vSol: events, graduated, mcapUsd, lastTradeAt };
+async function exitPriceFor(
+  pos: { mint: string; entryVSol: number; graduatedSeen: boolean },
+  live: LivePrice,
+): Promise<{ vSol: number | null; offCurve: boolean; graduatedNow: boolean; unpricedReason: string | null }> {
+  const graduatedNow = live.phase === "graduated";
+  const canUseIngested =
+    live.phase === "unknown" &&
+    !isOffCurvePosition({ entryVSol: pos.entryVSol, graduatedSeen: pos.graduatedSeen, graduatedNow });
+  const curveVSol = canUseIngested ? await latestVSolForMint(pos.mint).catch(() => null) : null;
+  const price = selectExitPrice({
+    entryVSol: pos.entryVSol,
+    graduatedSeen: pos.graduatedSeen,
+    live,
+    curveVSol,
+  });
+  return {
+    vSol: price.priced ? price.vSol : null,
+    offCurve: price.offCurve,
+    graduatedNow,
+    unpricedReason: price.priced ? null : price.reason,
+  };
 }
 
 /**
@@ -396,20 +430,41 @@ async function sweepOrphanedOpenPositions(): Promise<void> {
   const res = await getDb().execute(sql`
     SELECT id::text AS id, mint,
       current_price::float8 AS current_price,
-      entry_price::float8 AS entry_price
+      entry_price::float8 AS entry_price,
+      (entry_features->>'last_mark_exit_vsol')::float8 AS last_mark_exit_vsol,
+      COALESCE(entry_features->>'graduated_seen', '') = 'true' AS graduated_seen,
+      entry_features->>'session_id' AS session_id,
+      COALESCE(tp1_realized_sol, 0)::float8 AS tp1_realized_sol
     FROM paper_positions
     WHERE state = 'OPEN'
   `);
   const rows = (res as unknown as {
-    rows: Array<{ id: string; mint: string; current_price: number | null; entry_price: number }>;
+    rows: Array<{
+      id: string; mint: string; current_price: number | null; entry_price: number;
+      last_mark_exit_vsol: number | null; graduated_seen: boolean;
+      session_id: string | null; tp1_realized_sol: number;
+    }>;
   }).rows;
   if (rows.length === 0) return;
   for (const pos of rows) {
     // NEVER book raw current_price: mark-to-market writes it on the MCAP basis for
     // graduated coins while entry_price is on the CURVE basis, and the curve model
     // squares the difference. That fabricated +26.7 and +68.6 SOL "profits" on
-    // 0.24/0.08 SOL positions. Implausible marks close flat instead.
-    const safe = safeExitVSol({ entryVSol: pos.entry_price, candidateVSol: pos.current_price });
+    // 0.24/0.08 SOL positions. Implausible marks close flat instead. A graduated
+    // position books at the last exit mark computed on its own basis (flat if none).
+    const offCurve = isOffCurvePosition({
+      entryVSol: pos.entry_price,
+      graduatedSeen: pos.graduated_seen,
+      graduatedNow: false,
+    });
+    const safe = safeExitVSol({
+      entryVSol: pos.entry_price,
+      candidateVSol: forceCloseCandidateVSol({
+        offCurve,
+        lastMarkExitVSol: pos.last_mark_exit_vsol,
+        storedCurrentPrice: pos.current_price,
+      }),
+    });
     if (safe.mismatch) {
       log.warn("sweep: rejected implausible mark, closing flat", {
         id: pos.id, mint: pos.mint, reason: safe.reason,
@@ -422,6 +477,14 @@ async function sweepOrphanedOpenPositions(): Promise<void> {
       exitPriceOverride: safe.exitVSol,
     });
     if (closed.ok) {
+      // Count the close in its owning session's stats, like every other close path
+      // (sessions stopped with open positions used to under-report their trades).
+      if (pos.session_id && /^\d+$/.test(pos.session_id)) {
+        const finalPnl = pos.tp1_realized_sol + closed.data.realizedPnlSol;
+        await accumulateStat(pos.session_id, "tradesClosed", 1);
+        await accumulateStat(pos.session_id, finalPnl > 0 ? "wins" : "losses", 1);
+        await accumulateStat(pos.session_id, "realizedPnlSol", finalPnl);
+      }
       log.info("swept orphaned open position (no active session)", {
         id: pos.id,
         mint: pos.mint,
@@ -514,18 +577,41 @@ async function handleExits(session: AutoSessionDto) {
       rows.map((r) => r.mint),
       60,
     ).catch(() => new Map<string, { tradeCount: number; uniqueWallets: number; maxVSol: number }>());
+    // One batched on-chain read prices every open position for this tick.
+    const livePrices = await fetchLivePrices(rows.map((r) => r.mint));
+    // The price each position was decided on this tick, persisted for the UI below.
+    const tickPrices: Array<{ id: bigint; vSol: number }> = [];
 
     for (const pos of rows) {
       if (pos.entry_v_sol == null) continue;
       // Attribute closed-trade stats to the position's OWNING session (it may
       // have been opened by a now-stopped session but still occupies the ledger).
       const statSession = pos.pos_session_id ?? session.id;
+      const posFeatures = (pos.entry_features ?? {}) as Record<string, unknown>;
+      const graduatedSeen = posFeatures.graduated_seen === true;
+      const live: LivePrice = livePrices.get(pos.mint) ?? { phase: "unknown", reason: "not resolved", at: Date.now() };
       const {
         vSol: current,
-        graduated,
-        mcapUsd: currentMcapUsd,
-        lastTradeAt,
-      } = await resolveCurrentForExit(pos.mint);
+        offCurve,
+        graduatedNow,
+        unpricedReason,
+      } = await exitPriceFor({ mint: pos.mint, entryVSol: pos.entry_v_sol, graduatedSeen }, live);
+      // Display/research only; P&L below never uses a USD figure.
+      const currentMcapUsd = current != null ? mcapUsdFromVSol(current) : null;
+      // Graduation is one-way. Remember it, so a later tick with no price data
+      // cannot fall back to the frozen curve price.
+      if (graduatedNow && !graduatedSeen) {
+        await getDb()
+          .execute(sql`
+            UPDATE paper_positions
+            SET entry_features = COALESCE(entry_features, '{}'::jsonb)
+              || jsonb_build_object('graduated_seen', true)
+            WHERE id = ${BigInt(pos.id)}
+          `)
+          .catch(() => undefined);
+      }
+      // For position marks: whether the chain has reported this coin graduated.
+      const graduated = graduatedNow || graduatedSeen;
       if (current == null) {
         // Dead/illiquid mint: no live price feed. Don't let it hold a
         // concurrency slot forever — once past max hold, force-close at the
@@ -534,11 +620,25 @@ async function handleExits(session: AutoSessionDto) {
         const openedAtMs =
           pos.opened_at instanceof Date ? pos.opened_at.getTime() : new Date(pos.opened_at).getTime();
         const staleAgeMs = Date.now() - openedAtMs;
+        if (offCurve && Date.now() - lastUnpricedWarnAt > 30_000) {
+          lastUnpricedWarnAt = Date.now();
+          log.warn("holding graduated position without a price this tick", {
+            id: pos.id, mint: pos.mint, reason: unpricedReason,
+          });
+        }
         if (staleAgeMs < maxHoldMs) continue;
         // Same basis guard as the orphan sweep: the stored mark may be on the
         // mcap basis while entry_v_sol is on the curve basis, and the curve model
         // squares the gap. An implausible mark closes flat rather than booking fiction.
-        const staleSafe = safeExitVSol({ entryVSol: pos.entry_v_sol, candidateVSol: pos.current_price });
+        // A graduated position books at its last exit mark instead (flat if none).
+        const staleSafe = safeExitVSol({
+          entryVSol: pos.entry_v_sol,
+          candidateVSol: forceCloseCandidateVSol({
+            offCurve,
+            lastMarkExitVSol: posFeatures.last_mark_exit_vsol,
+            storedCurrentPrice: pos.current_price,
+          }),
+        });
         if (staleSafe.mismatch) {
           log.warn("stale close: rejected implausible mark, closing flat", {
             id: pos.id, mint: pos.mint, reason: staleSafe.reason,
@@ -593,47 +693,23 @@ async function handleExits(session: AutoSessionDto) {
       const now = Date.now();
       const ageMs = now - openedAt;
 
-      // Prefer REAL market-cap PnL (pump/DEX) when we have a real entry mcap and a
-      // live current mcap — accurate on AND off the bonding curve. Otherwise fall
-      // back to the bonding-curve vSol model. `realizedExitPrice` is the vSol fed
-      // to the curve close (value ∝ vSol²) so the booked PnL matches the chosen model.
-      const efPnl = (pos.entry_features ?? {}) as Record<string, unknown>;
-      let entryMcapStamp =
-        typeof efPnl.entry_mcap_usd === "number" && efPnl.entry_mcap_usd > 0
-          ? (efPnl.entry_mcap_usd as number)
-          : null;
-      let entryMcapIsReal = efPnl.entry_mcap_real === true;
-      // Backfill: the open-path pump fetch is best-effort (short timeout under load).
-      // The first exit tick after a young open reliably has a cached real mcap — use
-      // it as the real entry mcap so every position gets an accurate entry value.
-      if (!entryMcapIsReal && currentMcapUsd != null && currentMcapUsd > 0 && ageMs < 45_000) {
-        entryMcapStamp = currentMcapUsd;
-        entryMcapIsReal = true;
-        await getDb()
-          .execute(sql`
-            UPDATE paper_positions
-            SET entry_features = COALESCE(entry_features, '{}'::jsonb)
-              || jsonb_build_object('entry_mcap_usd', ${currentMcapUsd}::float8,
-                                    'entry_mcap_real', true)
-            WHERE id = ${BigInt(pos.id)}
-          `)
-          .catch(() => undefined);
-      }
-      // Single pricing seam (lib/pricing/seam.ts): prefers the real-mcap model
-      // (accurate on/off curve) when we have a real entry mcap + live mcap, else
-      // the bonding-curve vSol model. Invariants locked by lib/pricing/seam.test.ts.
+      // Single pricing seam (lib/pricing/seam.ts), curve model only: entry and
+      // current are both on-chain prices on the vSol scale, so (current / entry)²
+      // is the exact SOL return. The pump.fun market-cap model is not used here any
+      // more; it mixed a third-party, USD-denominated number into stop decisions.
+      // `realizedExitVSol` is the booking price for an off-curve position.
       const mark = markPnl({
         sizeSol: pos.size_sol,
         entryVSol: pos.entry_v_sol,
         currentVSol: current,
-        entryMcapUsd: entryMcapStamp,
-        currentMcapUsd,
-        entryMcapReal: entryMcapIsReal,
-        graduated,
+        entryMcapUsd: null,
+        currentMcapUsd: null,
+        entryMcapReal: false,
+        graduated: offCurve,
         pumpFeesPct: budget.pumpFeesPct,
         paperSlippagePct: budget.paperSlippagePct,
       });
-      const pnlSol = mark.pnlSol;
+      tickPrices.push({ id: BigInt(pos.id), vSol: current });
       const pctOfSize = mark.pctOfSize;
       const realizedExitPrice = mark.realizedExitVSol ?? undefined;
 
@@ -659,11 +735,16 @@ async function handleExits(session: AutoSessionDto) {
       const tp1FractionExisting = pos.tp1_fraction ?? 0;
       const id = BigInt(pos.id);
 
-      // Sample the path ~every 30s (see lib/paper/position-marks.ts). Recording
-      // only; nothing here influences the exit decision below.
+      // Sample the path ~every 30s (see lib/paper/position-marks.ts). Nothing here
+      // influences the exit decision below. `last_mark_exit_vsol` is the booking
+      // price on the entry's own basis; a later force-close of a graduated position
+      // with no price uses it instead of the stored mark-to-market price.
       const lastMarkAt = typeof ef.last_mark_at_ms === "number" ? (ef.last_mark_at_ms as number) : null;
       if (shouldMark(lastMarkAt, now)) {
         const flow = graduated ? null : (curveFlow.get(pos.mint) ?? null);
+        // Liveness for a graduated coin (its trades are on PumpSwap, not in `events`).
+        // Research only, so it is fetched at the 30 s mark cadence, not every tick.
+        const lastTradeAt = (await fetchPumpFunCoin(pos.mint).catch(() => null))?.lastTradeAt ?? null;
         marks.push({
           positionId: id,
           ageS: Math.round(ageMs / 1000),
@@ -679,7 +760,8 @@ async function handleExits(session: AutoSessionDto) {
           .execute(sql`
             UPDATE paper_positions
             SET entry_features = COALESCE(entry_features, '{}'::jsonb)
-              || jsonb_build_object('last_mark_at_ms', ${now}::float8)
+              || jsonb_build_object('last_mark_at_ms', ${now}::float8,
+                                    'last_mark_exit_vsol', ${mark.realizedExitVSol}::float8)
             WHERE id = ${id}
           `)
           .catch(() => undefined);
@@ -819,6 +901,22 @@ async function handleExits(session: AutoSessionDto) {
         extra: { sessionId: session.id },
       });
     }
+    // Persist the price every position was just decided on, so /trade shows the
+    // number the bot acted on rather than computing its own (lib/auto/session-positions).
+    if (tickPrices.length) {
+      const pricedAtMs = Date.now();
+      const values = tickPrices.map((p) => sql`(${p.id}::bigint, ${p.vSol}::float8)`);
+      await getDb()
+        .execute(sql`
+          UPDATE paper_positions AS p
+          SET current_price = v.price,
+              entry_features = COALESCE(p.entry_features, '{}'::jsonb)
+                || jsonb_build_object('price_at_ms', ${pricedAtMs}::float8)
+          FROM (VALUES ${sql.join(values, sql`, `)}) AS v(id, price)
+          WHERE p.id = v.id AND p.state = 'OPEN'
+        `)
+        .catch((e) => log.warn("tick price persist failed", { err: String(e) }));
+    }
     // One batched insert per tick. Best-effort: instrumentation must never
     // interfere with exits.
     if (marks.length) {
@@ -829,10 +927,12 @@ async function handleExits(session: AutoSessionDto) {
     return;
   }
 
-  // Live exits — skip pending_close / close_failed (sell-all claims those rows).
-  const open = await fetchOpenLivePositions();
+  // Live exits — only confirmed `open` rows (a `pending` buy holds no tokens yet;
+  // pending_close / close_failed are claimed by sell-all or need the operator).
+  const open = (await fetchOpenLivePositions()).filter((p) => (p.sessionId ?? null) === session.id);
+  // Same on-chain pricing as paper exits: one batched read for the tick.
+  const liveExitPrices = await fetchLivePrices(open.map((p) => p.mint));
   for (const pos of open) {
-    if ((pos.sessionId ?? null) !== session.id) continue;
     let entryV = pos.entryPrice;
     if (entryV == null) {
       const ef = pos.entryFeatures as Record<string, unknown> | null;
@@ -840,17 +940,50 @@ async function handleExits(session: AutoSessionDto) {
       if (typeof fromFeat === "number" && fromFeat > 0) entryV = fromFeat;
     }
     if (entryV == null) continue;
-    const current = await latestVSolFor(pos.mint);
+    const features = (pos.entryFeatures as Record<string, unknown> | null) ?? {};
+    // A sell already sent for this position settles first; never send a second.
+    if (features.pending_sell) continue;
+    const graduatedSeen = features.graduated_seen === true;
+    const livePrice: LivePrice =
+      liveExitPrices.get(pos.mint) ?? { phase: "unknown", reason: "not resolved", at: Date.now() };
+    const { vSol: current, graduatedNow } = await exitPriceFor(
+      { mint: pos.mint, entryVSol: entryV, graduatedSeen },
+      livePrice,
+    );
+    if (graduatedNow && !graduatedSeen) {
+      await getDb()
+        .execute(sql`
+          UPDATE live_trades
+          SET entry_features = COALESCE(entry_features, '{}'::jsonb) || jsonb_build_object('graduated_seen', true)
+          WHERE id = ${pos.id}
+        `)
+        .catch(() => undefined);
+    }
     if (current == null) continue;
     const fees = pos.sizeSol * 0.01 * 2;
     // Bonding-curve: position value scales as (vSol_now / vSol_entry)², not linearly.
+    // This is the exit DECISION estimate; the booked P&L comes from the confirmed
+    // sell (lib/workers/live-settlement.ts).
     const grossPct = (current / entryV) ** 2 - 1;
     const pctOfSize = grossPct - 0.02; // rough fees
     const pnlSol = pctOfSize * pos.sizeSol;
     const openedAt = pos.openedAt instanceof Date ? pos.openedAt.getTime() : Date.now();
     const ageMs = Date.now() - openedAt;
 
-    const features = (pos.entryFeatures as Record<string, unknown> | null) ?? {};
+    // Peak tracking, as on paper: the trailing stop and the flat-position cut need it.
+    const prevPeak = typeof features.peak_pct === "number" ? features.peak_pct : -Infinity;
+    const peakPct = Math.max(prevPeak, pctOfSize);
+    if (pctOfSize > prevPeak) {
+      await getDb()
+        .execute(sql`
+          UPDATE live_trades
+          SET entry_features = COALESCE(entry_features, '{}'::jsonb)
+            || jsonb_build_object('peak_pct', ${pctOfSize}::float8, 'peak_at_ms', ${ageMs}::float8)
+          WHERE id = ${pos.id}
+        `)
+        .catch(() => undefined);
+    }
+
     const tp1HitAt = features.tp1_hit_at as string | undefined;
     const tp1Realized = (features.tp1_realized_sol as number | undefined) ?? 0;
 
@@ -888,32 +1021,56 @@ async function handleExits(session: AutoSessionDto) {
         }
         const sellPct = Math.max(1, Math.min(99, Math.round(tp1Fraction * 100)));
         const sellRes = await executeLiveSell({
-          mint: pos.mint, percent: sellPct, keypair: kp, rpcUrl: rpcs[0]!,
+          mint: pos.mint,
+          percent: sellPct,
+          keypair: kp,
+          rpcUrl: rpcs[0]!,
+          positionId: pos.id,
+          reason: "tp1",
+          source: "auto",
         });
         if (sellRes.ok) {
-          log.info("auto live TP1 partial", {
+          // The realized amount is booked from the confirmed transaction.
+          log.info("auto live TP1 partial sent (pending confirmation)", {
             id: pos.id.toString(),
-            sellPct, realized: tp1Pnl.toFixed(4), route: sellRes.route,
-          });
-          await notify({
-            kind: "trade_win",
-            title: `TP1 partial on ${pos.mint.slice(0, 6)}…`,
-            body: `Sold ${sellPct}% · realized +${tp1Pnl.toFixed(4)} SOL · letting the rest ride`,
-            mint: pos.mint,
-            pnlSol: tp1Pnl,
+            sellPct, estimated: tp1Pnl.toFixed(4), route: sellRes.route,
           });
         } else {
-          log.warn("auto live TP1 sell failed", { mint: pos.mint, err: sellRes.error });
+          // Nothing was sold: clear the marker so TP1 can fire again next tick.
+          await getDb().execute(sql`
+            UPDATE live_trades
+            SET entry_features = COALESCE(entry_features, '{}'::jsonb)
+              - 'tp1_hit_at' - 'tp1_pct_of_size' - 'tp1_v_sol' - 'tp1_realized_sol' - 'tp1_fraction'
+            WHERE id = ${pos.id}
+          `);
+          log.warn("auto live TP1 sell failed; will retry", { mint: pos.mint, err: sellRes.error });
         }
       }
       continue;
     }
 
-    const exit =
-      pctOfSize >= tpPct ? "tp"
-      : pctOfSize <= -slPct ? "sl"
-      : ageMs >= maxHoldMs ? "timeout"
-      : null;
+    // The SAME exit policy paper trades run (lib/paper/exit-decision.ts): stop-loss,
+    // trailing stop, take-profit, flat-position cut, max hold — and the genesis
+    // tail-preserving variant. Live used a bare TP/SL/timeout check before, so the
+    // policy that paper measured was not the policy real money would have run.
+    const exit = features.genesis_snipe === true
+      ? decidePaperExit(pctOfSize, peakPct, ageMs, {
+          tpPct: Number.POSITIVE_INFINITY,
+          slPct: env().GENESIS_EXIT_SL_PCT,
+          maxHoldMs: env().GENESIS_EXIT_MAX_HOLD_MIN * 60_000,
+          trailArmPct: 0,
+          trailStopPct: 0,
+          stagnationMs: 0,
+        })
+      : decidePaperExit(pctOfSize, peakPct, ageMs, {
+          tpPct,
+          slPct,
+          maxHoldMs,
+          trailArmPct: trailingEnabled ? trailArmPct : 0,
+          trailStopPct: trailingEnabled ? trailStopPct : 0,
+          stagnationMs: trailingEnabled ? stagnationMs : 0,
+          stagnationMaxPeakPct,
+        });
     if (!exit) continue;
 
     // Final close — settle the residual.
@@ -952,57 +1109,29 @@ async function handleExits(session: AutoSessionDto) {
         percent: 100,
         keypair: kp,
         rpcUrl: rpcs[0]!,
+        positionId: pos.id,
+        reason,
+        source: "auto",
       });
       if (sellRes.ok) {
-        await closeLivePosition({
-          id: pos.id,
-          exitPrice: current,
-          pnlSol: finalPnl,
-          feesSol: fees,
-          exitReason: reason,
-          txSignatureClose: sellRes.signature ?? sellRes.simulatedSignature ?? null,
-        });
-        await accumulateStat(session.id, "tradesClosed", 1);
-        await accumulateStat(session.id, finalPnl > 0 ? "wins" : "losses", 1);
-        await accumulateStat(session.id, "realizedPnlSol", finalPnl);
-        log.info("auto closed live", {
+        // Close, P&L, session stats and the notification happen in
+        // lib/workers/live-settlement.ts once the sell confirms on-chain.
+        log.info("auto live exit sent (pending confirmation)", {
           id: pos.id.toString(),
           reason,
-          pnl: finalPnl.toFixed(4),
+          estimatedPnl: finalPnl.toFixed(4),
           route: sellRes.route,
         });
-        await notify({
-          kind: finalPnl >= 0 ? "trade_win" : "trade_loss",
-          title: `Auto-trade ${reason.toUpperCase()} on ${pos.mint.slice(0, 6)}…`,
-          body: `${finalPnl >= 0 ? "+" : ""}${finalPnl.toFixed(4)} SOL · ${sellRes.route}${sellRes.dryRun ? " (dry-run)" : ""}`,
-          mint: pos.mint,
-          pnlSol: finalPnl,
-        });
       } else {
-        log.warn("auto live sell failed", { mint: pos.mint, err: sellRes.error });
+        // Still open: the exit condition is re-evaluated and retried next tick.
+        log.warn("auto live sell failed; will retry", { mint: pos.mint, err: sellRes.error });
       }
     }
   }
 }
 
-async function accumulateStat(
-  sessionId: string,
-  key: "tradesOpened" | "tradesClosed" | "wins" | "losses" | "realizedPnlSol",
-  delta: number,
-) {
-  const k = key.replace(/'/g, "''");
-  const sid = BigInt(sessionId).toString();
-  await getDb().execute(
-    sql.raw(`
-    UPDATE auto_sessions
-    SET stats = jsonb_set(
-      stats,
-      '{${k}}',
-      to_jsonb(COALESCE((stats->>'${k}')::float8, 0) + ${delta})
-    )
-    WHERE id = ${sid}
-  `),
-  );
+async function accumulateStat(sessionId: string, key: SessionCounter, delta: number) {
+  await accumulateSessionStat(sessionId, key, delta);
 }
 
 async function fetchMintFlow(mint: string) {
@@ -1246,6 +1375,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     remaining = Math.max(0, session.params.maxConcurrent - openCount);
   }
   if (remaining <= 0) {
+    await recordCapacitySkips(session);
     return { pendingCount: 0, opened: 0, topSkipReasons: [], recentFilterSkips: [] };
   }
 
@@ -1275,24 +1405,45 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
   }
   const vSolBatch = await latestVSolBatch(pendingMints);
   const demoRelaxed = tagDemo && autoDemoRelaxEnabled();
-  // V2-simple entry (SYSTEM_DESIGN §IV.8): the soft selection gates below
-  // (max-entry-age, order-flow veto, activity floor) are the "complexity" the
-  // ablation found harmful — bypass them. Hard safety vetoes (rugged label,
-  // bundle/mechanical) below are kept.
-  const v2Mode = isV2SimpleEntry();
+  // V2-simple entry (SYSTEM_DESIGN §IV.8) changes which decisions are SELECTED
+  // (lib/trade/entry-filter qualifyV2Entry, the pending-queue predicate). It no
+  // longer switches off the entry gates below: with them bypassed, half of all
+  // entries went into $1M+ coins above the $60k ceiling (3 of 47 ever reached +10%)
+  // and signals up to 279 s old were executed. The entry-age limit, activity floor,
+  // market-cap ceiling and decision-age limit now apply in every entry mode.
+  // Coin Journey radar: what happened to each candidate, in the order below (lib/radar/recorder.ts).
+  const radar = (d: PendingBuyDecisionDto, stage: RadarEventStage, subStage: string | null, detail?: string) =>
+    recordRadarEvent({
+      mint: d.mint,
+      stage,
+      subStage,
+      score: d.confluenceScore,
+      detail: detail ?? null,
+      sessionId: session.id,
+      decisionId: d.id,
+    });
+  const evaluated = new Set<bigint>();
+  let capacityHit = false;
   for (const d of pendings) {
-    if (opened >= remaining) break;
+    if (opened >= remaining) {
+      capacityHit = true;
+      break;
+    }
+    evaluated.add(d.id);
     if (heldMints.has(d.mint)) {
       skipAlreadyHeld.push(d.id);
+      radar(d, "skipped", "already_in");
       continue;
     }
     if (!shouldAcceptAction(d.action, session.params.signalStrictness)) {
       skipFiltered.push(d.id);
+      radar(d, "rejected", "strictness", `${d.action} not accepted at strictness ${session.params.signalStrictness}`);
       continue;
     }
     const rugLabel = rugsByMint.get(d.mint);
     if (rugLabel === "rugged") {
       skipRugLabel.push(d.id);
+      radar(d, "rejected", "rug_label", "labelled rugged");
       continue;
     }
     const v =
@@ -1304,6 +1455,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       }));
     if (v == null || v <= 0) {
       bumpTransient(d.mint, "no live price yet");
+      radar(d, "rejected", "no_price", "no live price yet");
       const ageMs = Date.now() - new Date(d.ts).getTime();
       if (ageMs > 120_000) skipNoPrice.push(d.id);
       continue;
@@ -1325,7 +1477,42 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       const reason = `outside curve band: vSol ${v.toFixed(1)} not in [${bandLo ?? "-"}, ${bandHi ?? "-"}]`;
       log.info("auto skipped (curve band)", { mint: d.mint, reason });
       bumpTransient(d.mint, reason);
+      radar(d, "rejected", "curve_band", reason);
       continue;
+    }
+
+    // CURVE LADDER — a replication of an externally-specified rule, run only
+    // when a session asks for it. See lib/trade/curve-ladder.ts for what it is
+    // and why it is expected to fail.
+    //
+    // It fires almost never: over 10,507 offline episodes on our own 7-day feed
+    // it fired 29 times (0.28%), and never once below rung 30 because condition
+    // 3 is arithmetically unreachable there. A session running this should
+    // expect approximately no trades, and that IS the finding, not a fault.
+    if (session.params.requireCurveLadder === true) {
+      const lookup = await fetchLadderFeatures(d.mint).catch((e) => {
+        // Never let a failed lookup read as a pass: this gate's whole job is to
+        // refuse, so a database hiccup must refuse too, loudly.
+        log.warn("curve ladder lookup failed", { mint: d.mint, err: String(e) });
+        return null;
+      });
+      if (!lookup) {
+        bumpTransient(d.mint, "curve ladder: no fresh rung crossing");
+        radar(d, "rejected", "curve_ladder", "no fresh rung crossing");
+        continue;
+      }
+      const lad = ladderSignal(lookup.features);
+      if (!lad.fire) {
+        const reason = `curve ladder: ${lad.reason}`;
+        log.info("auto skipped (curve ladder)", { mint: d.mint, level: lad.level, reason });
+        bumpTransient(d.mint, reason.slice(0, 80));
+        radar(d, "rejected", "curve_ladder", reason);
+        continue;
+      }
+      log.info("curve ladder FIRED", {
+        mint: d.mint, level: lad.level, realSol: lookup.realSol.toFixed(2),
+        ageS: lookup.ageS.toFixed(1), reason: lad.reason,
+      });
     }
 
     // === Paper-aligned three-gate (Luo et al. WWW '26 §5.1.3) =============
@@ -1336,6 +1523,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     if (flags?.hasBundle || flags?.mechanicalUptrend) {
       if (session.mode === "live" || !autoDemoRelaxEnabled()) {
         bumpTransient(d.mint, "bundle/mechanical");
+        radar(d, "rejected", "bundle_veto", flags?.hasBundle ? "bundled launch" : "mechanical uptrend");
         continue;
       }
       log.info("demo bypass bundle/mechanical", {
@@ -1358,9 +1546,10 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     // Entry-age ceiling (data-driven from eval-paper): coins entered older than
     // ~1 min lose heavily (1–5 min bucket ≈ −7.5%) while fresh entries win — late
     // entries buy the top. Skip stale candidates when MAX_ENTRY_AGE_SEC is set.
-    const maxEntryAge = v2Mode ? 0 : env().MAX_ENTRY_AGE_SEC;
+    const maxEntryAge = env().MAX_ENTRY_AGE_SEC;
     if (maxEntryAge > 0 && timingAge != null && timingAge > maxEntryAge) {
       bumpTransient(d.mint, `too old (${Math.round(timingAge)}s > ${maxEntryAge}s)`);
+      radar(d, "rejected", "age_limit", `coin ${Math.round(timingAge)}s old > ${maxEntryAge}s`);
       continue;
     }
 
@@ -1401,6 +1590,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     if (!flow.allow) {
       log.info("auto skipped (flow)", { mint: d.mint, reason: flow.reason, boosted });
       bumpTransient(d.mint, flow.reason);
+      radar(d, "rejected", "flow", flow.reason);
       continue;
     }
 
@@ -1408,6 +1598,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       const reason = `smart money ${smart.tier} < ${requireSmart}: ${smart.reason}`;
       log.info("auto skipped (smart money)", { mint: d.mint, reason });
       bumpTransient(d.mint, reason.slice(0, 80));
+      radar(d, "rejected", "smart_money", reason);
       continue;
     }
     if (smart && smart.tier !== "none") {
@@ -1419,7 +1610,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     // smart-money buyer. Pure bonding-curve newborns with no DexScreener data are
     // unaffected. No momentum gate: winners actually had NEGATIVE 5m change at entry
     // (buying already-pumping coins = local top). Env-tunable; 0 disables.
-    const minDexBuys = v2Mode ? 0 : env().ENTRY_MIN_DEX_BUYS_M5;
+    const minDexBuys = env().ENTRY_MIN_DEX_BUYS_M5;
     if (minDexBuys > 0 && dexSnap) {
       const buys = dexSnap.buysM5 ?? 0;
       const hasSmart = insider.smartMoneyCount >= 1;
@@ -1427,6 +1618,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
         const reason = `low activity (buys=${buys}/${minDexBuys} smc=${insider.smartMoneyCount})`;
         log.info("auto skipped (activity floor)", { mint: d.mint, reason });
         bumpTransient(d.mint, reason);
+        radar(d, "rejected", "activity_floor", reason);
         continue;
       }
     }
@@ -1460,6 +1652,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
         tier: entryTier,
       });
       bumpTransient(d.mint, qual.reason.slice(0, 80));
+      radar(d, "rejected", "entry_filter", qual.reason);
       continue;
     }
     const agg = {
@@ -1469,26 +1662,38 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       timing: { confidence: qual.gateTimingConf ?? 0 },
     };
     const penalty = imitationPenaltyPct(sizeSol, v);
-    // Real-mcap entry ceiling (launch/hybrid only): the gate scores bonding-curve
+    // Market-cap entry ceiling (launch/hybrid only): the gate scores bonding-curve
     // data, so a coin that has already graduated to a large DEX cap can slip through
-    // as a "fresh launch". When MAX_ENTRY_MCAP_USD is set, skip those. Cached fetch,
-    // reused by the entry-mcap stamp below.
-    const maxEntryMcap = v2Mode ? 0 : env().MAX_ENTRY_MCAP_USD;
+    // as a "fresh launch". Measured from the same on-chain price the fill will use
+    // (lib/pricing/live-price), not the pump.fun API — whose missing responses used
+    // to let the coin through. No on-chain price means the fill would be refused
+    // anyway, so the candidate is skipped here with the reason.
+    const maxEntryMcap = env().MAX_ENTRY_MCAP_USD;
     if (maxEntryMcap > 0 && allowsLaunchTier()) {
-      try {
-        const coin = await fetchPumpFunCoin(d.mint);
-        const rm = coin?.usdMarketCap ?? null;
-        if (rm != null && rm > maxEntryMcap) {
-          bumpTransient(
-            d.mint,
-            `mcap $${Math.round(rm / 1000)}k > ceiling $${Math.round(maxEntryMcap / 1000)}k`,
-          );
-          continue;
-        }
-      } catch {
-        /* no pump data — allow (curve fallback) */
+      const live = await fetchLivePrice(d.mint);
+      if (live.phase === "unknown") {
+        bumpTransient(d.mint, `no on-chain price: ${live.reason}`.slice(0, 80));
+        radar(d, "rejected", "no_price", `no on-chain price: ${live.reason}`);
+        continue;
+      }
+      const mcapUsd = mcapUsdFromVSol(live.vSol);
+      if (mcapUsd != null && mcapUsd > maxEntryMcap) {
+        const reason = `mcap $${Math.round(mcapUsd / 1000)}k > ceiling $${Math.round(maxEntryMcap / 1000)}k`;
+        bumpTransient(d.mint, reason);
+        radar(d, "rejected", "mcap_ceiling", reason);
+        continue;
       }
     }
+    // Decision-age limit: the lookups above take real time per candidate, so the
+    // signal's age is checked here, immediately before either fill path.
+    const maxDecisionAgeSec = env().MAX_DECISION_AGE_SEC;
+    const decisionAgeMs = Date.now() - Date.parse(d.ts);
+    if (maxDecisionAgeSec > 0 && Number.isFinite(decisionAgeMs) && decisionAgeMs > maxDecisionAgeSec * 1000) {
+      bumpTransient(d.mint, `signal too old (${Math.round(decisionAgeMs / 1000)}s > ${maxDecisionAgeSec}s)`);
+      radar(d, "rejected", "stale", `signal ${Math.round(decisionAgeMs / 1000)}s old > ${maxDecisionAgeSec}s`);
+      continue;
+    }
+    radar(d, "gate_passed", null, `${d.action} · ${entryTier} tier`);
     if (session.mode === "paper") {
       if (tagDemo) {
         if (demoBalanceCache == null) {
@@ -1496,6 +1701,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
         }
         if (sizeSol > demoBalanceCache + 1e-9) {
           skipInsufficientDemo.push(d.id);
+          radar(d, "skipped", "insufficient_balance", `${sizeSol} SOL > ${demoBalanceCache.toFixed(3)} SOL demo balance`);
           continue;
         }
       }
@@ -1576,6 +1782,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
         log.warn("halt raised mid-tick — abandoning remaining entries", { mint: d.mint });
         break;
       }
+      radar(d, "decision_committed", null, `paper buy ${sizeSol} SOL`);
       const { outcome, positionId } = await executePaperBuy(plan, {
         mint: d.mint,
         symbol: null,
@@ -1597,6 +1804,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
           status: outcome.status, reason: outcome.rejectReason, mint: d.mint, sizeSol,
         });
         if (outcome.status === "rejected") skipInsufficientDemo.push(d.id);
+        radar(d, "skipped", "fill_rejected", `${outcome.status}${outcome.rejectReason ? `: ${outcome.rejectReason}` : ""}`);
         continue;
       }
       // Stamp normalized execution metrics for the learner's execution memory.
@@ -1655,6 +1863,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     // live mode — same gates as live-execution-listener (profile + confirm)
     const runtime = env();
     if (runtime.RUNTIME_PROFILE === "paper_safe") {
+      radar(d, "skipped", "live_blocked", "RUNTIME_PROFILE=paper_safe");
       await markSessionError("auto live blocked: RUNTIME_PROFILE=paper_safe");
       return {
         pendingCount: pendings.length,
@@ -1664,6 +1873,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       };
     }
     if (!isLiveAllowed() && runtime.LIVE_DRY_RUN !== "on") {
+      radar(d, "skipped", "live_blocked", "live execution not confirmed");
       await markSessionError("auto live blocked: LIVE_CONFIRM / RUNTIME_PROFILE=live required");
       return {
         pendingCount: pendings.length,
@@ -1676,6 +1886,7 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     const kp = peekKeypair();
     const rpcs = rpcHttpUrls();
     if (!kp || rpcs.length === 0) {
+      radar(d, "skipped", "live_blocked", !kp ? "wallet locked" : "no RPC endpoint");
       await markSessionError("wallet/rpc unavailable mid-tick");
       return {
         pendingCount: pendings.length,
@@ -1699,8 +1910,10 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
     if (!liveSim.ok) {
       log.warn("micro-sim rejected live open", { mint: d.mint, reason: liveSim.reason, sizeSol });
       bumpTransient(d.mint, `micro-sim: ${liveSim.reason}`);
+      radar(d, "skipped", "micro_sim", liveSim.reason ?? "slippage or depth check failed");
       continue;
     }
+    radar(d, "decision_committed", null, `live buy ${sizeSol} SOL`);
     const res = await executeLiveBuy({
       mint: d.mint,
       sizeSol,
@@ -1729,8 +1942,10 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
           UPDATE live_trades
           SET session_id = ${session.id},
             entry_price = COALESCE(entry_price, ${v}::float),
+            -- decision-time price kept for analysis only; entry_v_sol stays the
+            -- on-chain estimate until live-settlement books the real fill
             entry_features = COALESCE(entry_features, '{}'::jsonb)
-              || jsonb_build_object('entry_v_sol', ${v}::float)
+              || jsonb_build_object('decision_v_sol', ${v}::float)
           WHERE id = ${res.tradeId}
         `);
       }
@@ -1779,7 +1994,12 @@ async function handleEntries(session: AutoSessionDto): Promise<EntryTickStats> {
       });
     } else {
       log.warn("auto live buy failed", { mint: d.mint, reason: res.reason ?? res.error });
+      radar(d, "skipped", "fill_rejected", String(res.reason ?? res.error ?? "live buy failed"));
     }
+  }
+
+  if (capacityHit) {
+    for (const d of pendings) if (!evaluated.has(d.id)) radar(d, "skipped", "max_positions", "slots filled this tick");
   }
 
   if (skipAlreadyHeld.length) await markDecisionsSkipped(skipAlreadyHeld, "auto:already_open");

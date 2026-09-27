@@ -18,7 +18,7 @@ import { plainSol } from "@/components/ticker/format";
  * are requests, not authority. Nothing here bypasses the breaker, the daily
  * cap, the live gate, the vault, or the worker.
  */
-type Preset = "balanced" | "conservative" | "aggressive" | "scalp" | "momentum" | "smartMoney" | "compounder";
+type Preset = "balanced" | "conservative" | "aggressive" | "scalp" | "momentum" | "smartMoney" | "compounder" | "curveLadder";
 
 const RANGES = {
   sizeSol: { min: 0.001, max: 5, hint: "0.001 - 5 SOL" },
@@ -229,6 +229,7 @@ export function BotControls() {
               className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-sm text-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <option value="compounder">Compounder ($2 a trade, fast)</option>
+              <option value="curveLadder">Curve Ladder (replication test)</option>
               <option value="balanced">Balanced</option>
               <option value="conservative">Conservative</option>
               <option value="aggressive">Aggressive</option>
@@ -237,7 +238,9 @@ export function BotControls() {
               <option value="smartMoney">Smart Money (only when watched wallets buy)</option>
             </select>
             <p className="mt-1 text-xs text-muted">
-              {preset === "compounder"
+              {preset === "curveLadder"
+                ? "A replication of a published curve entry rule, run to check its NEGATIVE result — not to make money. Buys 0.349 SOL when the curve crosses 5/10/15/20/25/30/40/50/65 SOL with a small crossing trade, spread-out buyers and a fast climb; out after 31 seconds. Offline on our own 7 days it fired 29 times in 10,507 chances (0.28%), never below the 30 SOL rung, and averaged −9.2% net. Expect almost no trades."
+                : preset === "compounder"
                 ? "Targets a fixed $2 per trade on a 0.1 SOL stake (+13.3% net after all fees — break-even alone is +2%), stop at −6%, cuts anything flat at 3 min, 10 min max hold, 10 slots. Only buys in the vSol 20–70 curve band, where better wallets actually operate and where our own trades hit +13.3% about twice as often. Needs a 31% win rate to break even; measured so far is 12–16%. UNPROVEN — trading faster multiplies whatever the expectancy is, including a negative one."
                 : preset === "scalp"
                 ? "Small profits, fast slots: banks half at +5%, trails from +6%, cuts anything still flat at 5 min, max 12 min hold. Unproven — being measured."

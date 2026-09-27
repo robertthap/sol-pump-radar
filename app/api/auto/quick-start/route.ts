@@ -142,6 +142,42 @@ const PRESETS: Record<string, Partial<AutoSessionParams>> = {
     stagnationMaxPeakPct: 0.02,
     useLearnedAvoids: false,
   },
+  // CURVE LADDER -- a replication of an externally-specified pump.fun curve
+  // entry rule, implemented so its published NEGATIVE result can be checked on
+  // our own data. The source reports -0.09% / -0.44% / -0.37% excess against a
+  // matched random control: not distinguishable from random.
+  //
+  // Our own offline replication (pnpm ladder-eval, 10,507 episodes over 7 days)
+  // reproduces the structural defect exactly and adds two findings:
+  //
+  //   - It fired 29 times out of 10,507 episodes (0.28%), and NEVER below rung
+  //     30. Condition 3 needs a 26.18 SOL gain in 120s, which a curve sitting
+  //     at 25 SOL cannot have made. Five of the nine rungs are arithmetically
+  //     dead.
+  //   - Mean net return of the episodes it did fire on was negative at every
+  //     cost setting: -8.12% / -9.22% / -11.52%.
+  //
+  // It scores a POSITIVE excess (+12.30%) once matched on rung, but only
+  // because the control at rungs 50 and 65 is even worse (-21% and -32%).
+  // Losing less than a terrible benchmark is not an edge you can trade.
+  //
+  // Size and hold come from the specification and are deliberately not tuned:
+  // 0.349 SOL, out after 31 seconds or at graduation. Expect this preset to
+  // take approximately no trades. That is the result, not a malfunction.
+  curveLadder: {
+    sizeSol: 0.349,
+    maxConcurrent: 5,
+    signalStrictness: "strong_and_moderate",
+    requireCurveLadder: true,
+    // 31-second fallback exit, expressed in the engine's minutes.
+    maxHoldMinutes: 0.52,
+    // No take-profit, stop or trail in the specification -- the timer is the
+    // whole exit policy. These are set wide so they cannot fire first and
+    // silently turn this into a different rule.
+    takeProfitPct: 10,
+    stopLossPct: 0.95,
+    useLearnedAvoids: false,
+  },
   balanced: {
     sizeSol: 0.03,
     maxConcurrent: 5,

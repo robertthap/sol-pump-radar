@@ -79,6 +79,18 @@ export type AutoSessionParams = {
    */
   profitTargetUsd?: number;
   /**
+   * CURVE LADDER replication gate (the "curveLadder" preset). Entry requires a
+   * fresh bonding-curve rung crossing that satisfies all three of the source
+   * specification's conditions.
+   *
+   * EXPECT APPROXIMATELY NO TRADES. Offline over 10,507 episodes on our own
+   * 7-day feed the rule fired 29 times (0.28%), never below rung 30, and its
+   * mean net return was negative at every cost setting. This exists so the
+   * published negative result can be checked live, not because it is expected
+   * to make money. See lib/trade/curve-ladder.ts.
+   */
+  requireCurveLadder?: boolean;
+  /**
    * Relax this session's own opt-in momentum thresholds by half when the
    * smart-money signal is strong. Never relaxes the baseline dead/dumping veto
    * — see relaxMomentumThresholds.
@@ -250,6 +262,26 @@ export async function updateStats(id: bigint, stats: Partial<AutoSessionStats>):
     .limit(1);
   const merged = { ...DEFAULT_STATS, ...(cur[0]?.stats as AutoSessionStats), ...stats };
   await getDb().update(autoSessions).set({ stats: merged }).where(eq(autoSessions.id, id));
+}
+
+export type SessionCounter = "tradesOpened" | "tradesClosed" | "wins" | "losses" | "realizedPnlSol";
+
+/** Add `delta` to one numeric session stat in place (single statement, no read-modify-write race). */
+export async function accumulateSessionStat(sessionId: string, key: SessionCounter, delta: number): Promise<void> {
+  if (!Number.isFinite(delta)) return;
+  const k = key.replace(/'/g, "''");
+  const sid = BigInt(sessionId).toString();
+  await getDb().execute(
+    sql.raw(`
+    UPDATE auto_sessions
+    SET stats = jsonb_set(
+      stats,
+      '{${k}}',
+      to_jsonb(COALESCE((stats->>'${k}')::float8, 0) + ${delta})
+    )
+    WHERE id = ${sid}
+  `),
+  );
 }
 
 export async function fetchTodayLoss(sessionId: string): Promise<number> {
