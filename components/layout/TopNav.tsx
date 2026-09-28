@@ -15,14 +15,19 @@ const HaltButton = dynamic(() => import("@/components/HaltButton").then((m) => (
 });
 
 /**
- * Two destinations, the session pill, bot state, and the safety controls.
+ * The operating destinations, the session pill, bot state, and the safety controls.
  * Nothing here polls: bot state comes from the ticker when /trade is mounted,
  * otherwise from the mode provider's activeSession.
+ *
+ * /strategies is deliberately absent. The Strategy Lab replays frozen rules over
+ * RECORDED tape; it decides nothing live. Choosing a strategy to actually run is
+ * a Trade-page action (see BotControls "Select bot strategy"), and a nav link
+ * here sent operators to the backtest when they meant to start the bot. The page
+ * is still served at /strategies for anyone who wants the replay.
  */
 const NAV = [
   { href: "/trade", label: "Trade" },
   { href: "/radar", label: "Radar" },
-  { href: "/strategies", label: "Strategies" },
   { href: "/wallet", label: "Wallet" },
 ] as const;
 
