@@ -9,7 +9,13 @@ export const SOL_AUD_FALLBACK = 230;
 
 const TTL_MS = 60_000;
 
+/**
+ * `at` is the last SUCCESSFUL fetch, and nothing else may set it (M01).
+ * `attemptedAt` throttles retries separately, so a failing network cannot
+ * promote the fallback into looking like a real price.
+ */
 let cache = { usd: SOL_USD_FALLBACK, aud: SOL_AUD_FALLBACK, at: 0 };
+let attemptedAt = 0;
 
 /** Synchronous USD price for hot paths (mcap math, gates). Refresh via getSolUsd(). */
 export function getSolUsdSync(): number {
@@ -28,6 +34,10 @@ export const SOL_USD = SOL_USD_FALLBACK;
 export async function getSolUsd(): Promise<number> {
   const now = Date.now();
   if (now - cache.at < TTL_MS && cache.usd > 0) return cache.usd;
+  // Throttle RETRIES on the attempt clock, not the success clock: without this
+  // a persistently failing endpoint would be hit on every single call.
+  if (cache.at === 0 && attemptedAt > 0 && now - attemptedAt < TTL_MS) return cache.usd;
+  attemptedAt = now;
 
   try {
     const r = await fetch(
@@ -51,7 +61,11 @@ export async function getSolUsd(): Promise<number> {
     /* use last good or fallback */
   }
 
-  if (cache.at === 0) cache = { usd: SOL_USD_FALLBACK, aud: SOL_AUD_FALLBACK, at: now };
+  // M01 — do NOT stamp `at` here. This used to seed the fallback with
+  // `at: now`, which made everFetched true and usingFallback false, so the
+  // hardcoded A$230 was reported as a live rate and the whole finding was
+  // defeated. A failed fetch leaves the cache untouched: still the fallback,
+  // still saying so.
   return cache.usd;
 }
 

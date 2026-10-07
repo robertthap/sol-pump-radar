@@ -43,7 +43,8 @@
     "ladder-eval": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/curve-ladder-eval.ts",
     "test:trading": "pnpm --filter @spr/trading run test",
     "measure:latency": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/measure-latency.ts",
-    "strategy:report": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/strategy-report.ts"
+    "strategy:report": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/strategy-report.ts",
+    "daily:report": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/daily-report.ts"
   },
   "dependencies": {
     "@phantom/react-sdk": "^2.0.2",

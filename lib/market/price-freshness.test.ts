@@ -61,3 +61,25 @@ describe("solToAudDisplay (M01)", () => {
     assert.equal(solToAudDisplay(10, 230), "\u2248 A$2,300");
   });
 });
+
+describe("a failed fetch must not promote the fallback (M01 regression)", () => {
+  it("seeding the fallback does not count as having fetched", async () => {
+    // getSolUsd() used to do `if (cache.at === 0) cache = {...FALLBACK, at: now}`
+    // on a failed fetch. That made everFetched true and usingFallback false, so
+    // the hardcoded A$230 was reported as a live rate — defeating this finding
+    // entirely. Caught by the daily report printing "A$0.00" instead of
+    // "A$ rate unavailable" with no network available.
+    const mod = await import("@/lib/market/sol-usd");
+    const original = globalThis.fetch;
+    globalThis.fetch = (() => Promise.reject(new Error("no network"))) as typeof fetch;
+    try {
+      await mod.getSolUsd();
+      const snap = mod.solPriceCacheSnapshot();
+      assert.equal(snap.usingFallback, true, "a failed fetch left the fallback looking real");
+      assert.equal(snap.stale, true);
+      assert.equal(snap.ageMs, null, "there is no age — nothing was ever fetched");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
