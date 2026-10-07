@@ -50,6 +50,39 @@ The cluster used here was a scratch Postgres 16 created for the audit, with all
 
 **Group 2 is complete.**
 
+### Group 3 — paper realism and risk
+
+| Item | Status | Commit | Test |
+|---|---|---|---|
+| central LIVE guard | **fixed** | `feb074b` | `broadcast-guard.test.ts` (8) |
+| M02 | **fixed** | `914f52f` | `risk-day.test.ts` (14) |
+| H09 + H10 | **fixed** | `ba89705` | `entry-gates.test.ts` (10) |
+| M06 + M07 | **fixed** | `d650092` | `provenance.test.ts` (12) + 2 DB |
+| M05 | **fixed** | `28aef37` | `latency.test.ts` (14) |
+
+**Group 3 is complete.**
+
+- **LIVE guard** — every check lived in a caller; `rpcSendBase64` consulted no
+  flag at all. The guard now sits inside the single broadcast site and fails
+  closed. Exhaustive sweep: of 320 flag combinations exactly 3 may broadcast.
+  Mutation-verified — disabling it makes the choke-point test fail.
+- **M02** — FIVE daily-loss queries all used `now()::date`, the DB server's day.
+  On a UTC server that rolls mid-Sydney-morning, so twice the intended risk got
+  through. One Sydney definition now, DST-aware; partial closes count.
+- **H09/H10** — entries were allowed on a quiet or event-dropping feed, while
+  the breaker was PAUSED/DEGRADED, at any drawdown (`peak_equity_sol` was
+  written and never read), and with unlimited single-mint exposure. Gates fail
+  closed. **Exits are deliberately not gated.**
+- **M06/M07** — no provenance existed at all. Every trade now records code
+  version, config hash, whether a learner was running, and whether latency was
+  measured.
+- **M05** — the 80–280ms fill latency was a guess. `pnpm measure:latency`
+  samples the real path read-only; fills use the measurement when present and
+  record `latencyMeasured=false` when not.
+
+**Also found and fixed:** `packages/trading`'s own 15 tests were never run by
+`pnpm test` (it globs `lib/**`). `pnpm check` now runs `test:trading`.
+
 - **H07** — the flush spliced the batch out of the buffer BEFORE inserting, so
   any DB failure destroyed up to 500 events; and the watermark advanced at
   decode time, so the hole was invisible to gap recovery, which starts from the
@@ -124,12 +157,12 @@ Fix: `packages/trading/src/amounts`, BigInt throughout, throwing rather than
 rounding past the safe range. Rounds half away from zero and rounds fees UP,
 both against us. Wired into `lib/executor/swap-fill.ts`.
 
-## Next — Group 3 (paper realism and risk)
+## Next — Group 4 (honest strategy test)
 
-M05 (measure real latency, replace the 80–280ms default), H09 (block entries on
-stale/degraded data; real drawdown limit), H10 paper part, M02 (Sydney risk
-day), M06/M07 (learners off, config hash on every trade), plus one central
-guard proving no path can send a real transaction while LIVE is off.
+H14 on clean (non-censored) data only: walk-forward/out-of-sample splits with
+no look-ahead, calibration with Brier score and reliability, per-engine
+ablation, pre- vs post-graduation split, all costs and the measured latency,
+and a plain edge/no-edge verdict.
 
 ## Not done / blocked
 
@@ -142,5 +175,8 @@ guard proving no path can send a real transaction while LIVE is off.
   with RPC access before trusting any paper verdict — it is read-only.
 - **The paper ledger's columns are still numeric/float.** M04 made the
   conversion layer exact; converting the schema is a migration, not a patch.
-- Groups 3–5 not started.
-- `pnpm test` is now 603 passing, up from 524 at the start of the audit.
+- **Latency is NOT measured.** This container has no live feed, so
+  `PAPER_LATENCY_*` are unset and every trade records `latencyMeasured=false`.
+  Run `pnpm measure:latency` on your machine with the worker active.
+- Groups 4–5 not started.
+- `pnpm test` is now 660 passing, up from 524 at the start of the audit.
