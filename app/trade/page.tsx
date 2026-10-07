@@ -25,7 +25,7 @@ export default function TradePage() {
     <TickerProvider>
       {/* A div, not <main>: PortalLayout already renders the page's single <main> landmark. */}
       <div className="app-page space-y-3">
-        <SessionWalletBalance variant="compact" />
+        <SessionWalletBalance variant="compact" showDemoReset />
         <PnlHero />
         <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_320px]">
           <div className="order-2 min-w-0 md:order-1">
