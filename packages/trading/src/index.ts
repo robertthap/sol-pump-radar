@@ -1,5 +1,10 @@
 export type { PaperRuntimeConfig } from "./config";
 export {
+  LAMPORTS_PER_SOL, MAX_SAFE_SOL,
+  solToLamports, lamportsToSol, tokensToRaw, rawToTokens, rawToDecimalString,
+  sumLamports, applyBpsExact,
+} from "./amounts";
+export {
   CURVE_FEE, AMM_FEE, BASE_TX_FEE_SOL, ATA_RENT_SOL,
   venueFee, tradingFeeBps, tradingFeeSol, txCostSol, failedTxCostSol,
   ataRentSol, roundTripCostSol,

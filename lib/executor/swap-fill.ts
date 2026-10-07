@@ -15,6 +15,7 @@
  *                token-account rent taken out, so it is comparable to a pool or
  *                curve price (pool fees and slippage stay in, as they should).
  */
+import { rawToTokens, lamportsToSol } from "@spr/trading";
 
 export type ParsedTokenBalance = {
   accountIndex: number;
@@ -102,7 +103,10 @@ export function parseSwapFill(tx: ParsedSwapTx, mint: string): SwapFillResult {
   const fee = meta.fee ?? 0;
   const side: "buy" | "sell" = delta > 0n ? "buy" : "sell";
   const tokensRaw = delta > 0n ? delta : -delta;
-  const tokens = Number(tokensRaw) / 10 ** decimals;
+  // M04: exact conversion. A 1e9-supply token at 6 decimals is 1e15 raw units
+  // against a double's 9.007e15 ceiling, so whole-supply fills are one order of
+  // magnitude from losing integer precision silently.
+  const tokens = rawToTokens(tokensRaw, decimals);
 
   const allInLamports = side === "buy" ? -solDelta : solDelta;
   const swapLamports = side === "buy" ? -solDelta - fee - rentIn : solDelta + fee - rentOut;
@@ -111,7 +115,7 @@ export function parseSwapFill(tx: ParsedSwapTx, mint: string): SwapFillResult {
   if ((side === "buy" && allInLamports <= 0) || swapLamports <= 0 || tokens <= 0) {
     return { ok: false, reason: `implausible SOL movement for a ${side} (${solDelta} lamports)` };
   }
-  const priceSol = swapLamports / 1e9 / tokens;
+  const priceSol = lamportsToSol(BigInt(swapLamports)) / tokens;
   if (!Number.isFinite(priceSol) || priceSol <= 0) return { ok: false, reason: "unusable price" };
 
   return {

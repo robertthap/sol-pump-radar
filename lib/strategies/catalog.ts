@@ -1,4 +1,7 @@
-import { CURVE_FEE, BASE_TX_FEE_SOL } from "@spr/trading";
+// Import the LEAF module, not the package barrel: this file is reachable from a
+// client component, and the barrel pulls in @spr/db -> pg -> node:fs/dns, which
+// cannot be bundled for the browser.
+import { CURVE_FEE, BASE_TX_FEE_SOL } from "@spr/trading/fees";
 
 export const STRATEGIES = {
   graduation: {
