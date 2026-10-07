@@ -16,9 +16,10 @@ import { touchWorker } from "@/lib/workers/heartbeat";
 import { appendEvent } from "@spr/core";
 import { insertIngestFacts } from "@/lib/db/repos/ingest-facts";
 import { getDb } from "@/lib/db/client";
-import { upsertWatermark, openGap, closeGap, markUnrecoverable } from "@/lib/db/repos/ingest-gaps";
+import { getWatermark, upsertWatermark, openGap, closeGap, markUnrecoverable } from "@/lib/db/repos/ingest-gaps";
 import { recoverGapForMints, shouldCloseGap, type AtRiskMint } from "@/lib/ingest/gap-recovery";
 import { advanceWatermark, batchWatermark, commitBatch, peekBatch } from "@/lib/workers/flush-queue";
+import { coalesceWindow, startupWindow, type GapWindow } from "@/lib/workers/gap-window";
 import { makeHttpRpcClient } from "@/lib/rpc/http-client";
 
 const log = logger("ingestor");
@@ -61,6 +62,18 @@ export async function startIngestor() {
   const MAX_RECOVERABLE_GAP_SEC = 300;
   // Reentrancy guard for handleReconnect (multiple rapid reconnects share one gap)
   let recoveryInFlight = false;
+  // H05 — the earliest start of any disconnect that arrived while a recovery
+  // was running. Replayed once that recovery finishes, so a reconnect storm
+  // does not lose every window but the first.
+  let pendingWindow: GapWindow | null = null;
+  /** Take and clear the held window atomically (also keeps it out of TS's
+   *  control-flow narrowing, which would otherwise type it `never` inside the
+   *  deferred recovery closure). */
+  const takePendingWindow = (): GapWindow | null => {
+    const held = pendingWindow;
+    pendingWindow = null;
+    return held;
+  };
 
   async function flush(): Promise<void> {
     if (flushing) return;
@@ -152,12 +165,25 @@ export async function startIngestor() {
   // the normal path (chart WS skipped — backfill must not stream).
   async function handleReconnect(info: ReconnectInfo): Promise<void> {
     if (recoveryInFlight) {
-      log.info("ws reconnect during in-flight recovery — coalescing into one gap");
+      // H05 — this used to log "coalescing" and keep NOTHING: the second
+      // disconnect's window was dropped, so a reconnect storm recovered only
+      // the first gap. Hold the earliest start and replay it when the current
+      // recovery finishes.
+      pendingWindow = coalesceWindow(pendingWindow, {
+        fromSlot: BigInt(info.lastSlot), fromTs: info.lastTs,
+      });
+      log.info("ws reconnect during in-flight recovery — window held for replay", {
+        pendingFromSlot: pendingWindow.fromSlot.toString(),
+      });
       return;
     }
     recoveryInFlight = true;
-    const fromSlot = BigInt(info.lastSlot);
-    const fromTs = info.lastTs;
+    // A window held from an earlier disconnect starts no later than this one.
+    const merged = coalesceWindow(takePendingWindow(), {
+      fromSlot: BigInt(info.lastSlot), fromTs: info.lastTs,
+    });
+    const fromSlot = merged.fromSlot;
+    const fromTs = merged.fromTs;
     const httpUrls = rpcHttpUrls();
     if (!httpUrls.length) {
       log.warn("ws reconnect: no HTTP RPC for recovery; skipping");
@@ -286,6 +312,16 @@ export async function startIngestor() {
         await markUnrecoverable(gapId, "recovery threw").catch(() => undefined);
       } finally {
         recoveryInFlight = false;
+        // H05 — a disconnect arrived mid-recovery; its window is still missing.
+        const replay = takePendingWindow();
+        if (replay) {
+          log.info("replaying gap window held during recovery", {
+            fromSlot: replay.fromSlot.toString(),
+          });
+          void handleReconnect({
+            lastSlot: Number(replay.fromSlot), lastSig: null, lastTs: replay.fromTs,
+          }).catch((e) => log.warn("held-window replay failed", { err: String(e) }));
+        }
       }
     })();
   }
@@ -348,6 +384,43 @@ export async function startIngestor() {
     // T1.1 — fire-and-forget; handleReconnect manages its own reentrancy.
     void handleReconnect(info).catch((e) => log.warn("handleReconnect crashed", { err: String(e) }));
   });
+
+  // H05 — inherit the watermark the previous run persisted BEFORE the first
+  // connect. getWatermark() existed and was documented for exactly this, but
+  // nothing called it: the ingestor started at slot 0 every time, so the
+  // downtime between shutdown and startup produced no gap and was never
+  // recovered or recorded. A crash loop lost data silently, every cycle.
+  try {
+    const persisted = await getWatermark();
+    const start = startupWindow(
+      persisted ? { lastSlot: persisted.lastSlot, lastTs: persisted.lastTs } : null,
+      new Date(),
+      MAX_RECOVERABLE_GAP_SEC,
+    );
+    if (start) {
+      hwmSlot = start.window.fromSlot;
+      hwmSig = persisted?.lastSig ?? null;
+      hwmTs = start.window.fromTs;
+      log.info("resuming from persisted watermark", {
+        fromSlot: hwmSlot.toString(),
+        downtimeSec: start.downtimeSec.toFixed(1),
+        recoverable: start.recoverable,
+      });
+      // Treat the downtime as a disconnect. handleReconnect opens the gap, and
+      // marks it unrecoverable itself when the span exceeds the cap — so long
+      // downtime is RECORDED rather than quietly forgotten.
+      void handleReconnect({
+        lastSlot: Number(start.window.fromSlot),
+        lastSig: persisted?.lastSig ?? null,
+        lastTs: start.window.fromTs,
+      }).catch((e) => log.warn("startup gap recovery failed", { err: String(e) }));
+    } else {
+      log.info("no persisted watermark — fresh start, nothing to recover");
+    }
+  } catch (e) {
+    // Never block ingestion on the resume path.
+    log.warn("could not read persisted watermark; starting without a startup gap", { err: String(e) });
+  }
 
   sub.start();
   touchWorker("ingestor");
