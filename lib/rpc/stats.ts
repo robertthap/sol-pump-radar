@@ -17,6 +17,12 @@ export type IngestorStats = {
    *  loss until now: this was a closure-local counter the diagnostics endpoints
    *  could not see, so a slow Postgres shed events invisibly. */
   eventsDropped: number;
+  /**
+   * When the most recent drop happened. eventsDropped is cumulative and never
+   * resets, so it cannot answer "is the feed shedding data NOW" — asking that
+   * of the counter turned one old blip into a permanent trading stop (H09).
+   */
+  lastDropAt: number | null;
   /** received -> decoded: Borsh decode cost in the WS callback (ms). */
   decodeMsLast: number;
   decodeMsMax: number;
@@ -53,6 +59,7 @@ export function getIngestorStats(): IngestorStats {
       eventsInserted: 0,
       decodeErrors: 0,
       eventsDropped: 0,
+      lastDropAt: null,
       decodeMsLast: 0,
       decodeMsMax: 0,
       flushMsLast: 0,

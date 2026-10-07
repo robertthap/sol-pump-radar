@@ -2,6 +2,7 @@ import "server-only";
 import { readState } from "@/lib/circuit-breaker/state";
 import { env } from "@/lib/env";
 import { getIngestorStats } from "@/lib/rpc/stats";
+import { feedDegraded } from "@/lib/workers/feed-health";
 import {
   paperConfigFromEnv,
   ensurePortfolio,
@@ -94,7 +95,6 @@ export async function bootPaperEngine(): Promise<void> {
  */
 async function currentEntryHealth(): Promise<EntryHealth> {
   const [cb, stats] = [await readState(), getIngestorStats()];
-  const subscribed = stats.connState === "subscribed" || stats.connState === "open";
   const e = env();
   return {
     breakerState: cb.state as EntryHealth["breakerState"],
@@ -112,9 +112,11 @@ async function currentEntryHealth(): Promise<EntryHealth> {
     // Never connected means there is no age to report — which checkRisk treats
     // as stale, not as fresh.
     dataAgeMs: stats.lastMessageAt == null ? null : Math.max(0, Date.now() - stats.lastMessageAt),
-    // Dropped events mean the buffer is shedding data: the book we would price
-    // against is already incomplete.
-    feedDegraded: !subscribed || stats.eventsDropped > 0,
+    // Degraded means the feed is shedding data NOW. Asking the CUMULATIVE
+    // eventsDropped counter instead meant one old blip refused every entry for
+    // the rest of the process's life — the bot would take a few trades, drop an
+    // event, and silently never trade again (H09 regression).
+    feedDegraded: feedDegraded(stats, Date.now()),
   };
 }
 

@@ -357,6 +357,7 @@ export async function startIngestor() {
       droppedFromOverflow += parsed.length;
       // Mirror onto the shared stats object so /api/stats/ingestor can SEE the loss.
       stats.eventsDropped = droppedFromOverflow;
+      stats.lastDropAt = Date.now();
       droppedSinceAudit += parsed.length;
       if (droppedSinceAudit >= DROP_AUDIT_BATCH) {
         const batchSize = droppedSinceAudit;
@@ -468,6 +469,7 @@ export async function startIngestor() {
               } else {
                 swapResolutionRetries.delete(key);
                 stats.eventsDropped++;
+                stats.lastDropAt = Date.now();
               }
             } else {
               // Definitive non-WSOL/non-PumpSwap result; it cannot become useful.
@@ -513,6 +515,7 @@ export async function startIngestor() {
           if (kept.length < retry.length) {
             const dropped = retry.length - kept.length;
             stats.eventsDropped += dropped;
+            stats.lastDropAt = Date.now();
             for (const raw of retry.slice(kept.length)) {
               swapResolutionRetries.delete(swapEventKey(raw));
             }
@@ -551,6 +554,7 @@ export async function startIngestor() {
         // Counted, not silent: the curve path reports its drops and this one did
         // not, so a saturated swap buffer looked identical to a quiet market.
         stats.eventsDropped += raws.length;
+        stats.lastDropAt = Date.now();
         return;
       }
       swapBuffer.push(...raws);
