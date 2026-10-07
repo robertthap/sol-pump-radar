@@ -335,7 +335,14 @@ export async function closePosition(
     assertTransition("OPEN", "CLOSING");
     assertTransition("CLOSING", "CLOSED");
 
-    await client.query(
+    // H01: the state read above happens OUTSIDE this transaction, so two closes
+    // racing on one position both see 'OPEN' and both arrive here. The WHERE
+    // clause stops the second from re-writing the row, but nothing stopped it
+    // from crediting the balance again: a 1 SOL position settled twice paid out
+    // 1.98 SOL and booked two losses. Claim the row and settle ONLY if this
+    // transaction is the one that closed it — same guard partialClosePosition
+    // has always had.
+    const claimed = await client.query<{ id: string }>(
       `UPDATE paper_positions
        SET state = 'CLOSED',
            exit_price = $1,
@@ -344,9 +351,13 @@ export async function closePosition(
            unrealized_pnl_sol = 0,
            closed_at = now(),
            close_reason = $3
-       WHERE id = $4 AND state = 'OPEN'`,
+       WHERE id = $4 AND state = 'OPEN'
+       RETURNING id::text AS id`,
       [slip.fillPrice, pnl, intent.reason.slice(0, 32), intent.positionId.toString()],
     );
+    if (claimed.rows.length === 0) {
+      return { ok: false as const, code: "RACE_LOST", reason: "concurrent close detected" };
+    }
 
     await client.query(
       `INSERT INTO paper_trade_fills
