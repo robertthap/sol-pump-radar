@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./fees": "./src/fees/index.ts",
     "./amounts": "./src/amounts/index.ts",
-    "./pnl": "./src/pnl/index.ts"
+    "./pnl": "./src/pnl/index.ts",
+    "./risk-day": "./src/risk-day/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

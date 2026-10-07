@@ -17,6 +17,7 @@ import {
 import { fetchTokenBalance } from "@/lib/wallet/holdings";
 import { getEffectiveTradeLimits } from "@/lib/db/repos/settings";
 import { assertMayBroadcast } from "@/lib/runtime/broadcast-guard";
+import { dailyLossSol, riskDayWindow } from "@/lib/risk/risk-day";
 
 const log = logger("executor:live");
 
@@ -57,16 +58,22 @@ async function checkCaps(sizeSol: number): Promise<GuardOk | GuardFail> {
     };
   }
 
+  // M02 — one risk day, Australia/Sydney, shared with the paper engine.
+  // `closed_at::date = now()::date` was the DB server's day, which on a UTC
+  // server rolls mid-Sydney-morning and allowed two caps' worth of risk.
+  const liveDay = riskDayWindow(new Date());
   const lossRes = await getDb().execute(sql`
-    SELECT COALESCE(SUM(pnl_sol), 0)::float8 AS loss
+    SELECT COALESCE(SUM(pnl_sol), 0)::float8 AS net
     FROM live_trades
     WHERE status = 'closed'
-      AND closed_at::date = now()::date
-      AND pnl_sol < 0
+      AND closed_at >= ${liveDay.start.toISOString()}::timestamptz
+      AND closed_at <  ${liveDay.end.toISOString()}::timestamptz
   `);
-  const todayLoss = Math.abs(
-    (lossRes as unknown as { rows: Array<{ loss: number }> }).rows[0]?.loss ?? 0,
-  );
+  const todayLoss = dailyLossSol({
+    closedPnlSol: [(lossRes as unknown as { rows: Array<{ net: number }> }).rows[0]?.net ?? 0],
+    partialPnlSol: [],
+    feesWithoutPositionSol: [],
+  });
   if (todayLoss >= e.LIVE_MAX_DAILY_LOSS_SOL) {
     return { ok: false, reason: `daily_loss_cap (${todayLoss.toFixed(4)} SOL)` };
   }

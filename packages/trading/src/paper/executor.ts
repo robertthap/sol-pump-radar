@@ -5,6 +5,7 @@ import { withTx, loadPortfolio, loadOpenPositions } from "../portfolio";
 import { applySlippage } from "../slippage";
 import { curveValueRatio, curveRealizedPnlSol, curveUnrealizedPnlSol, curveExitSettlement } from "../pnl";
 import { txCostSol, type FeeModel } from "../fees";
+import { dailyLossSol, riskDayWindow } from "../risk-day";
 import { checkRisk } from "../risk";
 import { assertTransition } from "../state-machine";
 import type { PaperRuntimeConfig } from "../config";
@@ -127,18 +128,44 @@ async function maybeLatency(config: PaperRuntimeConfig): Promise<number> {
   return ms;
 }
 
-export async function todayRealizedLossSol(sessionId: bigint): Promise<number> {
+/**
+ * Realised loss so far in the current RISK DAY (M02).
+ *
+ * Was: `closed_at::date = now()::date`, the database server's calendar day.
+ * On a UTC server that rolls at 10:00/11:00 Sydney — mid trading day — so a bad
+ * morning and a bad afternoon counted as two days and twice the intended risk
+ * got through. The boundary is now Australia/Sydney local midnight, computed in
+ * lib/risk/risk-day.ts and passed in as explicit instants.
+ *
+ * Was also: losing positions only, and only on FULL close. A position that took
+ * a losing partial and had not yet closed contributed nothing to the cap.
+ * Partial realisations now count on the day they happened.
+ */
+export async function todayRealizedLossSol(sessionId: bigint, now: Date = new Date()): Promise<number> {
   const db = getRuntimeDb();
+  const { start, end } = riskDayWindow(now);
   const res = await db.execute(sql`
-    SELECT COALESCE(SUM(realized_pnl_sol), 0)::float8 AS loss
-    FROM paper_positions
-    WHERE session_id = ${sessionId.toString()}::bigint
-      AND state = 'CLOSED'
-      AND closed_at::date = now()::date
-      AND realized_pnl_sol < 0
+    SELECT
+      COALESCE((
+        SELECT SUM(realized_pnl_sol) FROM paper_positions
+        WHERE session_id = ${sessionId.toString()}::bigint
+          AND state = 'CLOSED'
+          AND closed_at >= ${start.toISOString()}::timestamptz
+          AND closed_at <  ${end.toISOString()}::timestamptz
+      ), 0)::float8 AS closed_pnl,
+      COALESCE((
+        SELECT SUM(tp1_realized_sol) FROM paper_positions
+        WHERE session_id = ${sessionId.toString()}::bigint
+          AND tp1_at_ts >= ${start.toISOString()}::timestamptz
+          AND tp1_at_ts <  ${end.toISOString()}::timestamptz
+      ), 0)::float8 AS partial_pnl
   `);
-  const row = (res as unknown as { rows: Array<{ loss: number }> }).rows[0];
-  return Math.abs(row?.loss ?? 0);
+  const row = (res as unknown as { rows: Array<{ closed_pnl: number; partial_pnl: number }> }).rows[0];
+  return dailyLossSol({
+    closedPnlSol: [row?.closed_pnl ?? 0],
+    partialPnlSol: [row?.partial_pnl ?? 0],
+    feesWithoutPositionSol: [],
+  });
 }
 
 export async function openPosition(

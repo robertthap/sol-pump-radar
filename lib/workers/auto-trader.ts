@@ -80,6 +80,7 @@ import { touchWorker } from "@/lib/workers/heartbeat";
 import { recordRadarEvent } from "@/lib/radar/recorder";
 import type { RadarEventStage } from "@/lib/radar/snapshot";
 import { tickResearchTrader } from "@/lib/workers/research-trader";
+import { dailyLossSol, riskDayWindow } from "@/lib/risk/risk-day";
 
 const log = logger("auto-trader");
 const TICK_MS = 1_000;
@@ -363,25 +364,45 @@ async function todayLossSol(session: AutoSessionDto): Promise<number> {
   if (session.mode === "paper") {
     // Source of truth = paper_positions (FSM-managed). Session tag stored in
     // entry_features.session_id JSONB.
+    const day = riskDayWindow(new Date());
+    // M02 — Sydney risk day, and PARTIAL realisations count: a position that
+    // took a losing partial and had not yet closed used to contribute nothing.
     const res = await getDb().execute(sql`
-      SELECT COALESCE(SUM(realized_pnl_sol), 0)::float8 AS loss
-      FROM paper_positions
-      WHERE entry_features->>'session_id' = ${session.id}
-        AND state = 'CLOSED'
-        AND closed_at::date = now()::date
-        AND realized_pnl_sol < 0
+      SELECT
+        COALESCE((
+          SELECT SUM(realized_pnl_sol) FROM paper_positions
+          WHERE entry_features->>'session_id' = ${session.id}
+            AND state = 'CLOSED'
+            AND closed_at >= ${day.start.toISOString()}::timestamptz
+            AND closed_at <  ${day.end.toISOString()}::timestamptz
+        ), 0)::float8 AS closed_pnl,
+        COALESCE((
+          SELECT SUM(tp1_realized_sol) FROM paper_positions
+          WHERE entry_features->>'session_id' = ${session.id}
+            AND tp1_at_ts >= ${day.start.toISOString()}::timestamptz
+            AND tp1_at_ts <  ${day.end.toISOString()}::timestamptz
+        ), 0)::float8 AS partial_pnl
     `);
-    return Math.abs(((res as unknown as { rows: Array<{ loss: number }> }).rows[0]?.loss ?? 0));
+    const row = (res as unknown as { rows: Array<{ closed_pnl: number; partial_pnl: number }> }).rows[0];
+    return dailyLossSol({
+      closedPnlSol: [row?.closed_pnl ?? 0],
+      partialPnlSol: [row?.partial_pnl ?? 0],
+      feesWithoutPositionSol: [],
+    });
   }
+  const liveDay = riskDayWindow(new Date());
   const res = await getDb().execute(sql`
-    SELECT COALESCE(SUM(pnl_sol), 0)::float8 AS loss
+    SELECT COALESCE(SUM(pnl_sol), 0)::float8 AS net
     FROM live_trades
     WHERE session_id = ${session.id}
       AND status = 'closed'
-      AND closed_at::date = now()::date
-      AND pnl_sol < 0
+      AND closed_at >= ${liveDay.start.toISOString()}::timestamptz
+      AND closed_at <  ${liveDay.end.toISOString()}::timestamptz
   `);
-  return Math.abs(((res as unknown as { rows: Array<{ loss: number }> }).rows[0]?.loss ?? 0));
+  return dailyLossSol({
+    closedPnlSol: [(res as unknown as { rows: Array<{ net: number }> }).rows[0]?.net ?? 0],
+    partialPnlSol: [], feesWithoutPositionSol: [],
+  });
 }
 
 /**

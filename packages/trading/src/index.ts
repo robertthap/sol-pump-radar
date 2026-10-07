@@ -1,5 +1,8 @@
 export type { PaperRuntimeConfig } from "./config";
 export {
+  RISK_TIMEZONE, startOfRiskDay, riskDayWindow, riskDayKey, isSameRiskDay, dailyLossSol,
+} from "./risk-day";
+export {
   LAMPORTS_PER_SOL, MAX_SAFE_SOL,
   solToLamports, lamportsToSol, tokensToRaw, rawToTokens, rawToDecimalString,
   sumLamports, applyBpsExact,

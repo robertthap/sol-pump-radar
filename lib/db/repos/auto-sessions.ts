@@ -1,6 +1,7 @@
 import "server-only";
 import { sql, desc, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
+import { dailyLossSol, riskDayWindow } from "@/lib/risk/risk-day";
 import { PAPER_TRADES_READ } from "@/lib/db/paper-read";
 import { autoSessions } from "@/lib/db/schema";
 import { logger } from "@/lib/log";
@@ -297,18 +298,23 @@ export async function accumulateSessionStat(sessionId: string, key: SessionCount
   );
 }
 
+/** Loss so far in the current RISK DAY (M02: Australia/Sydney, not the DB server's day). */
 export async function fetchTodayLoss(sessionId: string): Promise<number> {
+  const window = riskDayWindow(new Date());
   const res = await getDb().execute(sql`
-    SELECT COALESCE(SUM(pnl_sol), 0)::float8 AS loss
+    SELECT COALESCE(SUM(pnl_sol), 0)::float8 AS net
     FROM live_trades
     WHERE session_id = ${sessionId}
       AND status = 'closed'
-      AND closed_at::date = now()::date
-      AND pnl_sol < 0
+      AND closed_at >= ${window.start.toISOString()}::timestamptz
+      AND closed_at <  ${window.end.toISOString()}::timestamptz
   `);
-  type Raw = { loss: number };
+  type Raw = { net: number };
   const row = (res as unknown as { rows: Raw[] }).rows[0];
-  return row?.loss ?? 0;
+  // Returned NEGATIVE to preserve this function's existing sign convention.
+  return -dailyLossSol({
+    closedPnlSol: [row?.net ?? 0], partialPnlSol: [], feesWithoutPositionSol: [],
+  });
 }
 
 export async function fetchSessionTrades(sessionId: string, limit = 50) {
