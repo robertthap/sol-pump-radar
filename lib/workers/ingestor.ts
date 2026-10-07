@@ -18,6 +18,7 @@ import { insertIngestFacts } from "@/lib/db/repos/ingest-facts";
 import { getDb } from "@/lib/db/client";
 import { upsertWatermark, openGap, closeGap, markUnrecoverable } from "@/lib/db/repos/ingest-gaps";
 import { recoverGapForMints, type AtRiskMint } from "@/lib/ingest/gap-recovery";
+import { advanceWatermark, batchWatermark, commitBatch, peekBatch } from "@/lib/workers/flush-queue";
 import { makeHttpRpcClient } from "@/lib/rpc/http-client";
 
 const log = logger("ingestor");
@@ -66,15 +67,26 @@ export async function startIngestor() {
     if (buffer.length === 0) return;
     flushing = true;
     const flushStartedAt = Date.now();
-    const batch = buffer.splice(0, Math.min(buffer.length, 500));
+    // H07 — PEEK, do not splice. The batch stays in the buffer until the insert
+    // commits, so a database failure cannot drop it on the floor.
+    const batch = peekBatch(buffer, 500);
+    let committed = false;
     try {
       // Core ingest truth first — audit/launch paths must not block event inserts.
       const inserted = await insertEvents(batch);
+      committed = true;
+      commitBatch(buffer, batch.length);
       stats.eventsInserted += inserted;
-      // T1.1 — persist watermark on each flush so a worker restart picks up
-      // where we left off. Cheap UPSERT; idempotent and monotonic.
-      if (hwmSlot > 0n) {
-        upsertWatermark({ lastSlot: hwmSlot, lastSig: hwmSig, lastTs: hwmTs })
+      // H07 — the watermark advances ONLY to what this commit actually covered,
+      // and never backwards. Awaited: a watermark that silently failed to
+      // persist would re-open the same window on restart.
+      const mark = advanceWatermark(
+        hwmSlot > 0n ? { slot: hwmSlot, sig: hwmSig, ts: hwmTs } : null,
+        batchWatermark(batch, new Date()),
+      );
+      if (mark && mark.slot > 0n) {
+        hwmSlot = mark.slot; hwmSig = mark.sig; hwmTs = mark.ts;
+        await upsertWatermark({ lastSlot: mark.slot, lastSig: mark.sig, lastTs: mark.ts })
           .catch((e) => log.warn("watermark upsert failed", { err: String(e) }));
       }
 
@@ -107,6 +119,12 @@ export async function startIngestor() {
     } catch (e) {
       stats.lastError = "flush: " + String(e);
       log.error("flush error", { err: String(e) });
+      // H07 — the insert never committed, so the batch is still in the buffer
+      // and will be retried. Only an insert that threw BEFORE commitBatch can
+      // reach here with the events still queued; nothing is lost.
+      if (!committed && batch.length) {
+        log.warn("flush failed; batch retained for retry", { batch: batch.length, queued: buffer.length });
+      }
     } finally {
       // decoded -> persisted (T1 -> T2). The whole chain is serialized behind
       // `flushing`, so this duration is exactly what backs the buffer up.
@@ -258,12 +276,11 @@ export async function startIngestor() {
     recordSignature();
     if (n.err) return;
     if (!n.signature || !n.logs) return;
-    // T1.1 — track HWM as we see notifications, regardless of parse success.
-    if (n.slot && n.slot > Number(hwmSlot)) {
-      hwmSlot = BigInt(n.slot);
-      hwmSig = n.signature ?? null;
-      hwmTs = new Date();
-    }
+    // H07 — seeing a notification is NOT storing it. This used to advance the
+    // persisted watermark at decode time, so a failed flush left the watermark
+    // covering events that were never written, and gap recovery (which starts
+    // from the watermark) could not see the hole it exists to find. The
+    // watermark now moves only in flush(), after the insert commits.
     let parsed: ParsedPumpEvent[];
     const receivedAt = Date.now();
     try {
