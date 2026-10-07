@@ -33,8 +33,10 @@ The cluster used here was a scratch Postgres 16 created for the audit, with all
 | H02 | **fixed** | `42f007e` | `exit-settlement.test.ts` (7 pure) + 3 DB cases |
 | M01 | **fixed** | `8cc8e0c` | `price-freshness.test.ts` (8 pure) |
 | H03 | **fixed** | `07f0ddb` | `executor-accounting.test.ts` — fill after the delay |
-| M03 | **open** | — | — |
-| M04 | **open** | — | — |
+| M03 | **fixed** | `3d5d253` | `fee-model.test.ts` (11 pure) |
+| M04 | **fixed** | `0041b06` | `amounts.test.ts` (18 pure) |
+
+**Group 1 is complete — all six findings fixed.**
 
 Every fix made paper results **harsher**, never better. No threshold, sizing or
 strategy parameter was touched.
@@ -71,31 +73,41 @@ market moving 100 → 150 at 20ms, the entry filled at 100.
 Fix: await the delay first, quote after. Overrides are bookkeeping and still
 neither wait nor re-quote.
 
-## Next
+### M03 — two fee models in one ledger
+General paper charged 1.00%; research charged a hardcoded 1.25%; both wrote to
+`paper_positions`. Neither charged the Solana base signature fee at all, and
+neither modelled rent or failed-transaction cost.
+Fix: `packages/trading/src/fees` is the single source — curve 1.25%
+(0.95 protocol + 0.30 creator, measured), AMM 1.25% with the split recorded as
+unmeasured rather than invented, base fee 0.000005 SOL charged on failures too,
+ATA rent owed while open and refunded on close.
 
-**M03 — one fee model.** Confirmed, not yet fixed. The two paper engines
-disagree: research charges **1.25%** (`lib/workers/research-trader.ts:94,162`,
-hardcoded `0.0125`) while general paper charges **1.00%**
-(`config.feeBps = 100`). Both write to the same `paper_positions` ledger, so
-results are not comparable across engines. Research also passes fees in as
-caller-computed inputs (`packages/trading/src/paper/research.ts`) rather than
-deriving them from `PaperRuntimeConfig`, so there is no single place the model
-lives. Needs: one source of truth, plus the check against real on-chain
-pump.fun / PumpSwap transactions the brief asks for (not possible from this
-container — no RPC access to transaction history).
+**FLAGGED ASSUMPTION:** the general engine's per-side fee ROSE from 1.00% to
+1.25%. Not tuning — it makes every result worse, and 1.00% predates creator
+fees. **Old paper results are not comparable with new ones.**
 
-**M04 — BigInt raw amounts.** Confirmed, not started. The executor is float
-end to end (`::float8` casts, JS numbers for quantity and lamports). Raw token
-amounts and lamports should be integer/BigInt, with tests for decimals, dust
-and large values. This is a genuine refactor, not a patch, and it touches the
-schema's numeric columns — worth agreeing the approach before starting.
+### M04 — float money
+Lamports and raw token amounts were doubles. A 1e9-supply token at 6 decimals
+is 1e15 raw units against a 9.007e15 ceiling — one order of magnitude from
+silent precision loss.
+Fix: `packages/trading/src/amounts`, BigInt throughout, throwing rather than
+rounding past the safe range. Rounds half away from zero and rounds fees UP,
+both against us. Wired into `lib/executor/swap-fill.ts`.
+
+## Next — Group 2 (data integrity)
+
+H07, H06, H04, H05, plus: affected outcomes marked censored, not deleted, and
+excluded from training and evaluation.
 
 ## Not done / blocked
 
 - **AUDIT_REPORT.md** not written: the Phase 1 discovery report was never
   attached to this session, so the full finding list (C01, H01–H14, M01–M07,
-  L01) and their original wording are not available here. Only the six Group 1
-  codes in the brief are known.
-- **M03's on-chain validation** needs real transaction data this container
-  cannot reach.
-- Groups 2–5 not started.
+  L01) and its wording are unavailable here. Only the Group 1–2 codes named in
+  the brief are known.
+- **M03's on-chain validation is NOT done.** This container's network policy
+  refuses Solana RPC (403 on CONNECT). Run `pnpm verify:fee-model` on a machine
+  with RPC access before trusting any paper verdict — it is read-only.
+- **The paper ledger's columns are still numeric/float.** M04 made the
+  conversion layer exact; converting the schema is a migration, not a patch.
+- Groups 3–5 not started.
