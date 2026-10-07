@@ -55,3 +55,36 @@ export function startupWindow(
     recoverable: downtimeSec <= maxRecoverableSec,
   };
 }
+
+/**
+ * How an ingest gap overlapping a label's horizon must censor that label.
+ *
+ * The old gate ignored `scope = 'unrecoverable'` entirely, so a window that is
+ * KNOWN to be permanently missing produced labels with blocked_reason = NULL
+ * and horizons_complete = true — indistinguishable from clean data, and fed
+ * straight into training and evaluation. That is backwards: unrecoverable is
+ * the case where censoring matters most, because it will never improve.
+ *
+ * Censored labels are MARKED, never deleted. A deleted row cannot be audited,
+ * and its absence silently biases whatever is fitted on what remains.
+ */
+export type CensorReason = "gap" | "gap_unrecoverable" | null;
+
+export type CensorDecision = {
+  reason: CensorReason;
+  /** Whether a later pass should try again (recovery may still fill the hole). */
+  retry: boolean;
+  /** Whether the label may be used for training or evaluation. */
+  trainable: boolean;
+};
+
+export function censorDecision(
+  overlap: { unrecoverable: boolean } | null,
+): CensorDecision {
+  if (!overlap) return { reason: null, retry: false, trainable: true };
+  // Recoverable: hold it open — recovery may yet complete and make it usable.
+  if (!overlap.unrecoverable) return { reason: "gap", retry: true, trainable: false };
+  // Unrecoverable: terminal. Never trainable, and never retried — retrying
+  // forever would keep the row pending and hide that it is permanently censored.
+  return { reason: "gap_unrecoverable", retry: false, trainable: false };
+}

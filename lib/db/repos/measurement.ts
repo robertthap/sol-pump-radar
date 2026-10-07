@@ -100,6 +100,10 @@ export async function fetchMaturingSnapshots(limit = 200): Promise<MaturingSnaps
     WHERE fs.ts < now() - interval '5 minutes'
       AND fs.sample_source <> 'post_exit'
       AND (ol.id IS NULL OR ol.horizons_complete = false)
+      -- Permanently censored: the data is known to be missing and will never
+      -- arrive, so re-attempting forever only keeps the row pending and hides
+      -- that it is censored. It stays in the table, marked, for audit.
+      AND ol.blocked_reason IS DISTINCT FROM 'gap_unrecoverable'
     ORDER BY fs.ts ASC
     LIMIT ${limit}
   `);

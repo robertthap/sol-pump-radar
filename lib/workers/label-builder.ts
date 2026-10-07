@@ -7,7 +7,8 @@ import {
   upsertOutcomeLabel,
   type MaturingSnapshot,
 } from "@/lib/db/repos/measurement";
-import { gapOverlaps } from "@/lib/db/repos/ingest-gaps";
+import { gapOverlapKind } from "@/lib/db/repos/ingest-gaps";
+import { censorDecision } from "@/lib/workers/gap-window";
 import { touchWorker } from "@/lib/workers/heartbeat";
 
 /**
@@ -86,14 +87,18 @@ async function labelOne(s: MaturingSnapshot): Promise<boolean> {
   // horizon, the forward returns would be computed over incomplete event data.
   // Mark the label blocked_reason='gap' and bail; once recovery completes (or
   // the gap is unrecoverable + expired), the next pass will succeed/finalize.
-  if (await gapOverlaps(s.ts, SIX_HOURS_SEC)) {
+  const censor = censorDecision(await gapOverlapKind(s.ts, SIX_HOURS_SEC));
+  if (censor.reason) {
     await upsertOutcomeLabel({
       snapshotId: s.id, mint: s.mint, baseTs: s.ts,
       ret5m: null, ret30m: null, ret1h: null, ret6h: null,
       maxGainPct: null, maxDrawdownPct: null, isRug: null, isBreakout: null,
       timeToPeakSec: null, timeToGraduationSec: null,
-      horizonsComplete: false, // not final — let recovery complete and re-attempt
-      blockedReason: "gap",
+      // Never marked complete: a censored label is MARKED, not deleted, and not
+      // counted as clean data. 'gap' may still be retried once recovery
+      // finishes; 'gap_unrecoverable' is terminal and must never train a model.
+      horizonsComplete: false,
+      blockedReason: censor.reason,
     });
     return true;
   }

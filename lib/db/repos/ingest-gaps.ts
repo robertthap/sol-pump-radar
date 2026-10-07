@@ -114,17 +114,35 @@ export async function markUnrecoverable(id: bigint, note?: string): Promise<void
  * Uses the partial index ingest_gaps_open_window_idx (WHERE NOT recovered).
  */
 export async function gapOverlaps(ts: Date, horizonSec: number): Promise<boolean> {
+  return (await gapOverlapKind(ts, horizonSec)) != null;
+}
+
+/**
+ * Which kind of unrecovered gap overlaps this horizon, if any.
+ *
+ * The previous gate excluded `scope = 'unrecoverable'`, so a window that will
+ * NEVER be recovered did not block the label: it was computed over data known
+ * to be missing, marked complete, and used for training and evaluation like any
+ * clean row. Unrecoverable gaps are now reported — and reported DISTINCTLY,
+ * because a recoverable gap should be retried and an unrecoverable one must be
+ * censored permanently.
+ */
+export async function gapOverlapKind(
+  ts: Date,
+  horizonSec: number,
+): Promise<{ unrecoverable: boolean } | null> {
   const horizonEndIso = new Date(ts.getTime() + horizonSec * 1000).toISOString();
   const res = await getDb().execute(sql`
-    SELECT EXISTS (
-      SELECT 1 FROM ingest_gaps
-      WHERE NOT recovered
-        AND scope <> 'unrecoverable'
-        AND started_ts <= ${horizonEndIso}::timestamptz
-        AND ended_ts   >= ${ts.toISOString()}::timestamptz
-    ) AS overlaps
+    SELECT bool_or(scope = 'unrecoverable') AS unrecoverable
+    FROM ingest_gaps
+    WHERE NOT recovered
+      AND started_ts <= ${horizonEndIso}::timestamptz
+      AND ended_ts   >= ${ts.toISOString()}::timestamptz
   `);
-  return Boolean((res as unknown as { rows: Array<{ overlaps: boolean }> }).rows[0]?.overlaps);
+  const row = (res as unknown as { rows: Array<{ unrecoverable: boolean | null }> }).rows[0];
+  // bool_or over no rows is NULL: no overlapping gap at all.
+  if (!row || row.unrecoverable == null) return null;
+  return { unrecoverable: Boolean(row.unrecoverable) };
 }
 
 /** Diagnostic: count of unrecovered gaps (surfaced to UI/health). */

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { coalesceWindow, startupWindow, type GapWindow } from "@/lib/workers/gap-window";
+import { coalesceWindow, censorDecision, startupWindow, type GapWindow } from "@/lib/workers/gap-window";
 
 /**
  * H05 — on startup, use the persisted watermark; survive restarts and double
@@ -69,5 +69,38 @@ describe("coalescing a disconnect during recovery (H05)", () => {
       pending = coalesceWindow(pending, w(slot, 10));
     }
     assert.equal(pending!.fromSlot, 700n);
+  });
+});
+
+describe("censoring labels over an ingest gap (H04/H05 data integrity)", () => {
+  it("no overlapping gap means the label is usable", () => {
+    const d = censorDecision(null);
+    assert.equal(d.reason, null);
+    assert.equal(d.trainable, true);
+    assert.equal(d.retry, false);
+  });
+
+  it("a recoverable gap censors the label but keeps it open for retry", () => {
+    const d = censorDecision({ unrecoverable: false });
+    assert.equal(d.reason, "gap");
+    assert.equal(d.trainable, false);
+    assert.equal(d.retry, true, "recovery may still fill the hole");
+  });
+
+  it("an UNRECOVERABLE gap censors permanently and is never trainable", () => {
+    // The bug: gapOverlaps excluded scope='unrecoverable', so these labels were
+    // built as if the data were complete and fed into training.
+    const d = censorDecision({ unrecoverable: true });
+    assert.equal(d.reason, "gap_unrecoverable");
+    assert.equal(d.trainable, false, "data known to be missing must never train a model");
+    assert.equal(d.retry, false, "retrying forever would hide that it is permanently censored");
+  });
+
+  it("every censored case is marked, never silently usable", () => {
+    for (const overlap of [{ unrecoverable: false }, { unrecoverable: true }]) {
+      const d = censorDecision(overlap);
+      assert.notEqual(d.reason, null, "a censored label must carry a reason it can be filtered by");
+      assert.equal(d.trainable, false);
+    }
   });
 });
