@@ -1,5 +1,11 @@
 export type { PaperRuntimeConfig } from "./config";
 export {
+  walkForwardSplits, assertNoLookAhead, tradeStats, maxDrawdown, evInterval,
+  brierScore, reliabilityBins, calibrationError, ablation, verdict,
+  type Trade, type Fold, type TradeStats, type Interval,
+  type Prediction, type ReliabilityBin, type AblationResult, type Verdict,
+} from "./evaluation";
+export {
   percentiles, latencyProfile, fillLatency, sampleFillLatencyMs,
   type LatencyStage, type StageSamples, type Percentiles,
   type LatencyProfile, type FillLatency,
