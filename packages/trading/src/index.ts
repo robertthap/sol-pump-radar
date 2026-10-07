@@ -1,5 +1,11 @@
 export type { PaperRuntimeConfig } from "./config";
 export {
+  CURVE_FEE, AMM_FEE, BASE_TX_FEE_SOL, ATA_RENT_SOL,
+  venueFee, tradingFeeBps, tradingFeeSol, txCostSol, failedTxCostSol,
+  ataRentSol, roundTripCostSol,
+  type VenueFee, type Venue, type FeeModel, type RoundTrip,
+} from "./fees";
+export {
   researchBuy,
   researchClose,
   researchCloseAtMark,

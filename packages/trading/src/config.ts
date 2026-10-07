@@ -1,3 +1,5 @@
+import { CURVE_FEE, BASE_TX_FEE_SOL } from "./fees";
+
 /**
  * Runtime config for the paper engine. Read once from env at worker boot;
  * passed explicitly into executor calls — no hidden globals.
@@ -11,8 +13,13 @@ export type PaperRuntimeConfig = {
   enableSlippage: boolean;
   enableFees: boolean;
   enableLatency: boolean;
-  /** Per-side fee in bps (e.g. 100 = 1.0%). pump.fun graduates take ~1% per side. */
+  /**
+   * Per-side trading fee in bps. Sourced from the shared fee model (M03) so the
+   * general and research engines cannot drift apart; see packages/trading/src/fees.
+   */
   feeBps: number;
+  /** Solana base signature fee in SOL per transaction. Charged on failures too. */
+  baseTxFeeSol: number;
   /**
    * Priority fee (SOL) charged PER LEG to model the real on-chain cost paper
    * otherwise ignores. On a 0.03–0.05 SOL trade a 0.0005 SOL priority fee is
@@ -50,7 +57,10 @@ export function paperConfigFromEnv(env: NodeJS.ProcessEnv = process.env): PaperR
     enableSlippage: flag(env.PAPER_ENABLE_SLIPPAGE, true),
     enableFees: flag(env.PAPER_ENABLE_FEES, true),
     enableLatency: flag(env.PAPER_ENABLE_LATENCY, true),
-    feeBps: 100,
+    // 1.25% (0.95% protocol + 0.30% creator), measured. The previous 1.00%
+    // predates creator fees and made general paper cheaper than research paper.
+    feeBps: CURVE_FEE.totalBps,
+    baseTxFeeSol: BASE_TX_FEE_SOL,
     priorityFeeSol: num(env.LIVE_PRIORITY_FEE_SOL, 0.0005),
     baseSlippageBps: 30,
     latencyMinMs: 80,

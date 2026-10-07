@@ -16,10 +16,19 @@ import { researchStrategy } from "@/lib/strategies/bot-config";
 import { candidates } from "@/lib/strategies/replay";
 import { beforeTime, buyAt, costs, fillState, prepareTape, randomFor, sellAt, slotAt, spot } from "@/lib/strategies/pool";
 import { EXIT_TAU, exitFeatures, shouldScaleIn, treeHazard } from "@/lib/strategies/features";
+import { tradingFeeSol } from "@spr/trading";
 
 const finite = (v: unknown, fallback = 0) => typeof v === "number" && Number.isFinite(v) ? v : fallback;
 const proxy = (s: { x: number; k: number }) => Math.sqrt(spot(s) * CURVE_K);
 const permitBuys = async () => (await readState()).state !== "HALTED";
+/**
+ * M03: the research engine's trading fee comes from the SHARED model rather than
+ * a hardcoded 0.0125. The general executor charged 1.00% while this charged
+ * 1.25%, both into the same paper_positions ledger, so the two engines' results
+ * were never comparable. Both are 1.25% now, with one place to change it.
+ */
+const researchTradingFee = (notionalSol: number) =>
+  tradingFeeSol(notionalSol, { venue: "curve", priorityFeeSol: 0, enabled: true });
 
 /** Research sessions consume the event tape directly; generic signals/presets never gate these rules. */
 export async function tickResearchTrader(session: AutoSessionDto | null, allowEntries: boolean) {
@@ -91,7 +100,7 @@ export async function tickResearchTrader(session: AutoSessionDto | null, allowEn
     };
     const result = await paperResearchBuy({ mint: e.mint, key, autoSessionId: session.id, maxConcurrent: session.params.maxConcurrent,
       dailyLossCap: session.params.maxDailyLossSol, fill: { price: proxy(entry.state), tokens: fill.tokens, cash: STRATEGIES[strategy].size + c.tx,
-        fee: STRATEGIES[strategy].size * 0.0125 + c.tx, ts: entry.ts }, features });
+        fee: researchTradingFee(STRATEGIES[strategy].size) + c.tx, ts: entry.ts }, features });
     await finish(result.ok ? "OPEN" : "SKIPPED", result.ok ? `${STRATEGIES[strategy].name}: ${rule}` : result.reason);
     if (result.ok && !result.duplicate) opened++;
   }
@@ -159,7 +168,7 @@ async function managePosition(p: ResearchPosition, rows: TapeEvent[], active: Au
         const next = { ...f, research_footprint: footprint + fill.intoPool, research_added: true, research_tx_fees: finite(f.research_tx_fees) + c.tx };
         const result = await paperResearchBuy({ mint: p.mint, key: `research:add:${p.id}`, autoSessionId: active.id, addTo: p.id,
           maxConcurrent: active.params.maxConcurrent, dailyLossCap: active.params.maxDailyLossSol, features: next,
-          fill: { price: proxy(add.state), tokens: fill.tokens, cash: STRATEGIES.scaleIn.size + c.tx, fee: STRATEGIES.scaleIn.size * 0.0125 + c.tx, ts: add.ts } });
+          fill: { price: proxy(add.state), tokens: fill.tokens, cash: STRATEGIES.scaleIn.size + c.tx, fee: researchTradingFee(STRATEGIES.scaleIn.size) + c.tx, ts: add.ts } });
         if (result.ok && !result.duplicate) { tokens += fill.tokens; notional += STRATEGIES.scaleIn.size + c.tx; footprint += fill.intoPool; Object.assign(f,next); f.research_add_ts = add.ts; }
         else if (!result.ok) f.research_add_reason = result.reason;
       } else {

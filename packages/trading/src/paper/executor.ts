@@ -4,6 +4,7 @@ import { getRuntimeDb } from "@spr/db";
 import { withTx, loadPortfolio, loadOpenPositions } from "../portfolio";
 import { applySlippage } from "../slippage";
 import { curveValueRatio, curveRealizedPnlSol, curveUnrealizedPnlSol, curveExitSettlement } from "../pnl";
+import { txCostSol, type FeeModel } from "../fees";
 import { checkRisk } from "../risk";
 import { assertTransition } from "../state-machine";
 import type { PaperRuntimeConfig } from "../config";
@@ -74,6 +75,21 @@ async function quoteOrFail(
 function applyFee(notionalSol: number, feeBps: number, enabled: boolean): number {
   if (!enabled) return 0;
   return (notionalSol * feeBps) / 10_000;
+}
+
+/**
+ * The shared fee model (M03) for this config. The paper engine trades the
+ * bonding curve, and config.feeBps is already sourced from it, so passing it as
+ * the override keeps a frozen-specification replay able to state its own rate
+ * without forking the model.
+ */
+function feeModelFor(config: PaperRuntimeConfig): FeeModel {
+  return {
+    venue: "curve",
+    priorityFeeSol: config.priorityFeeSol,
+    enabled: config.enableFees,
+    tradingFeeBpsOverride: config.feeBps,
+  };
 }
 
 /**
@@ -365,7 +381,9 @@ export async function closePosition(
   // Priority-fee drag (A2): the entry leg was NOT charged at open, so charge the
   // round trip (entry + exit) here against realized PnL + balance. Paper otherwise
   // ignores this real on-chain cost and reads optimistically high.
-  const priorityRoundTripSol = config.enableFees ? config.priorityFeeSol * 2 : 0;
+  // M03: the Solana BASE signature fee was never charged by either engine — only
+  // the priority fee was. txCostSol carries both, per leg.
+  const priorityRoundTripSol = txCostSol(feeModelFor(config)) * 2;
   // H02: the TRADING fee at entry was also never charged — it only shrank
   // `quantity`, which the curve settlement never reads. Carry the recorded entry
   // fee for the slice being closed so it cannot be refunded here.
@@ -545,7 +563,8 @@ export async function partialClosePosition(
   // Priority-fee drag (A2): one on-chain leg for this partial sell. (The entry
   // leg + final-exit leg are charged at the full close, so a position with one
   // partial pays 3 legs total = entry + partial-sell + final-sell.)
-  const priorityLegSol = config.enableFees ? config.priorityFeeSol : 0;
+  // M03: base signature fee + priority fee for this one sell leg.
+  const priorityLegSol = txCostSol(feeModelFor(config));
   const settlement = curveExitSettlement({
     entryVSol: row.entry_price,
     exitVSol: slip.fillPrice,

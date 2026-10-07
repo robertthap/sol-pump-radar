@@ -27,6 +27,7 @@
     "worker:unlock": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/release-worker-lock.ts",
     "validate": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/cross-validate.ts",
     "demo:freq-check": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/check-demo-entry-frequency.ts",
+    "verify:fee-model": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/verify-fee-model.ts",
     "verify:review": "tsx --tsconfig tsconfig.cli.json --import ./scripts/preload-cli.ts scripts/verify-review-fixes.ts",
     "audit:web-writes": "tsx --tsconfig tsconfig.cli.json scripts/audit-web-write-gate.ts",
     "audit:api-reads": "tsx --tsconfig tsconfig.cli.json scripts/audit-api-reads.ts",

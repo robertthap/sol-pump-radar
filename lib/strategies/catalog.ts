@@ -1,3 +1,5 @@
+import { CURVE_FEE, BASE_TX_FEE_SOL } from "@spr/trading";
+
 export const STRATEGIES = {
   graduation: {
     name: "Graduation Scout (V1)", phase: "After graduation", size: 0.552, hold: 600,
@@ -29,8 +31,13 @@ export type ExecutionSetting = keyof typeof EXECUTION;
 export const CURVE_K = 3.219e10;
 export const PROGRESS_SOL = 85;
 export const GRADUATION_PRICE = 84.99 / 206.9e6;
-export const DEX_FEE = 0.0125;
-export const BASE_TX_FEE = 0.000005;
+// M03: one fee model for every paper engine. These keep the frozen
+// specification's own names, but their VALUES now come from
+// packages/trading/src/fees so the research replay and the general paper
+// executor cannot drift apart. Both were already 1.25% and 5000 lamports;
+// this removes the second copy, it does not change the numbers.
+export const DEX_FEE = CURVE_FEE.totalBps / 10_000;
+export const BASE_TX_FEE = BASE_TX_FEE_SOL;
 
 export type TapeEvent = {
   id: number; mint: string; ts: number; slot: number;

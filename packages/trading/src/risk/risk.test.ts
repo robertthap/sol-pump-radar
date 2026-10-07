@@ -10,6 +10,7 @@ const config: PaperRuntimeConfig = {
   dailyLossLimitSol: 1,
   enableSlippage: true,
   enableFees: true,
+  baseTxFeeSol: 0.000005,
   enableLatency: false,
   feeBps: 100,
   priorityFeeSol: 0.0005,

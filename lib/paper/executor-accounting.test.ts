@@ -106,8 +106,11 @@ describe("paper executor accounting", { skip }, () => {
     assert.equal(closed.ok, true);
     if (!closed.ok) return;
 
-    // Entry fee leaves first; the exit fee is charged on what the rest is worth.
-    const expected = -(size * feeRate) - size * (1 - feeRate) * feeRate;
+    // Entry fee leaves first; the exit fee is charged on what the rest is worth;
+    // and both legs pay the Solana base signature fee (M03), which neither
+    // engine used to charge at all.
+    const network = cfg.baseTxFeeSol * 2;
+    const expected = -(size * feeRate) - size * (1 - feeRate) * feeRate - network;
     const delta = (await trading.loadPortfolio())!.balanceSol - before;
 
     assert.ok(
