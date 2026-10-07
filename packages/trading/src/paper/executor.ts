@@ -148,10 +148,15 @@ export async function openPosition(
   });
   if (!risk.ok) return { ok: false, code: risk.code, reason: risk.reason };
 
+  // H03: wait FIRST, then quote. Quoting before the delay fills at a mark that
+  // existed before the order could have landed — a free look-ahead that flatters
+  // every entry, since the decision to buy correlates with the price about to
+  // move. The delay models the gap between decision and landing, so the price
+  // that matters is the one at the END of it.
+  const latencyMs = await maybeLatency(config);
+
   const quote = await quoteOrFail(resolvePrice, intent.mint);
   if ("error" in quote) return { ok: false, code: "NO_PRICE", reason: quote.error };
-
-  const latencyMs = await maybeLatency(config);
 
   const slip = config.enableSlippage
     ? applySlippage({
@@ -326,6 +331,12 @@ export async function closePosition(
       };
     }
   }
+  // H03: wait FIRST, then quote — see openPosition. An exit is where the stale
+  // mark hurts most: it books the price that triggered the exit rather than the
+  // worse one the sell actually reaches. An override is bookkeeping, not a live
+  // fill, so it neither waits nor re-quotes.
+  const latencyMs = useOverride ? 0 : await maybeLatency(config);
+
   let quote: PriceQuote;
   if (useOverride) {
     quote = { mint: row.mint, price: override, referenceVSol: override };
@@ -334,8 +345,6 @@ export async function closePosition(
     if ("error" in q) return { ok: false, code: "NO_PRICE", reason: q.error };
     quote = q;
   }
-
-  const latencyMs = useOverride ? 0 : await maybeLatency(config);
   // Force-close (override) fills at the given price with no synthetic slippage —
   // it represents a last-known mark, not a live execution.
   const slip = !useOverride && config.enableSlippage
@@ -507,6 +516,9 @@ export async function partialClosePosition(
 
   const pOverride = intent.exitPriceOverride;
   const pUseOverride = pOverride != null && Number.isFinite(pOverride) && pOverride > 0;
+  // H03: wait FIRST, then quote — see openPosition and closePosition.
+  const latencyMs = pUseOverride ? 0 : await maybeLatency(config);
+
   let quote: PriceQuote;
   if (pUseOverride) {
     quote = { mint: row.mint, price: pOverride, referenceVSol: pOverride };
@@ -515,8 +527,6 @@ export async function partialClosePosition(
     if ("error" in q) return { ok: false, code: "NO_PRICE", reason: q.error };
     quote = q;
   }
-
-  const latencyMs = pUseOverride ? 0 : await maybeLatency(config);
   const partialQty = row.quantity * intent.fraction;
   const partialNotional = row.notional_sol * intent.fraction;
   const slip = !pUseOverride && config.enableSlippage

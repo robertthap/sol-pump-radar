@@ -146,6 +146,25 @@ describe("paper executor accounting", { skip }, () => {
     }
   });
 
+  it("H03: a fill prices the market AFTER the latency delay, not before it", async () => {
+    // Fixed 60ms delay; the market moves at 20ms. A fill that quotes before
+    // sleeping books the pre-move price it could never actually have got.
+    const cfg = config({ enableLatency: true, latencyMinMs: 60, latencyMaxMs: 60 });
+    let price = 100;
+    const timer = setTimeout(() => { price = 150; }, 20);
+    const moving = async (mint: string) => ({ mint, price, referenceVSol: price });
+
+    const opened = await trading.openPosition({ mint: "H03", sizeSol: 1 }, cfg, moving);
+    clearTimeout(timer);
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+
+    assert.equal(
+      opened.data.fillPrice, 150,
+      `filled at ${opened.data.fillPrice}; the market was 150 by the time the order landed`,
+    );
+  });
+
   it("H02: a partial close then a full close still match the wallet exactly", async () => {
     const cfg = config();
     const before = (await trading.loadPortfolio())!.balanceSol;
