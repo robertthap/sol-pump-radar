@@ -30,6 +30,8 @@ export type OutcomeAffectingConfig = {
   maxDrawdownPct: number;
   maxDataStalenessMs: number;
   maxPerMintSol: number;
+  /** M05 — whether fills used a MEASURED latency distribution or the guess. */
+  measuredLatency: { p50: number; p90: number; p99: number } | null;
 };
 
 /** The keys, in a FIXED order, so the hash cannot change with object literal order. */
@@ -38,11 +40,21 @@ const HASHED_KEYS: Array<keyof OutcomeAffectingConfig> = [
   "enableFees", "enableSlippage", "enableLatency", "latencyMinMs", "latencyMaxMs",
   "maxPositionSol", "maxOpenPositions", "dailyLossLimitSol",
   "maxDrawdownPct", "maxDataStalenessMs", "maxPerMintSol",
+  "measuredLatency",
 ];
 
 /** Canonical text for a config: stable across key order and object identity. */
 export function canonicalConfig(config: OutcomeAffectingConfig): string {
-  return HASHED_KEYS.map((k) => `${k}=${String(config[k])}`).join("|");
+  return HASHED_KEYS.map((k) => {
+    const v = config[k];
+    // measuredLatency is an object; name its values so a change to the measured
+    // distribution changes the hash, as it changes every fill.
+    if (k === "measuredLatency") {
+      const m = v as OutcomeAffectingConfig["measuredLatency"];
+      return `measuredLatency=${m ? `${m.p50}/${m.p90}/${m.p99}` : "none"}`;
+    }
+    return `${k}=${String(v)}`;
+  }).join("|");
 }
 
 /**
@@ -97,6 +109,8 @@ export type TradeProvenance = {
   /** False when an adaptive component was running — the trade is not measurement-grade. */
   measurementClean: boolean;
   adaptiveActive: string[];
+  /** M05 — false means these fills used the 80-280ms guess, not a measurement. */
+  latencyMeasured: boolean;
 };
 
 export function tradeProvenance(input: {
@@ -110,5 +124,6 @@ export function tradeProvenance(input: {
     configHash: configHash(input.config),
     measurementClean: integrity.clean,
     adaptiveActive: integrity.active,
+    latencyMeasured: input.config.measuredLatency != null,
   };
 }

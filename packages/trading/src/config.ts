@@ -39,9 +39,18 @@ export type PaperRuntimeConfig = {
   maxPerMintSol: number;
   /** Base slippage floor in bps before liquidity impact. */
   baseSlippageBps: number;
-  /** Simulated execution latency window (ms) when latency is enabled. */
+  /**
+   * Fallback latency window (ms), used ONLY when no measurement exists.
+   * 80-280 was a guess, never a measurement — see measuredLatency.
+   */
   latencyMinMs: number;
   latencyMaxMs: number;
+  /**
+   * M05 — measured end-to-end latency percentiles from `pnpm measure:latency`.
+   * When present, fills use this distribution instead of the guess, and the
+   * trade records that its latency was measured.
+   */
+  measuredLatency: { p50: number; p90: number; p99: number } | null;
   markToMarketMs: number;
 };
 
@@ -51,6 +60,22 @@ function flag(v: string | undefined, dflt: boolean): boolean {
   if (t === "on" || t === "true" || t === "1") return true;
   if (t === "off" || t === "false" || t === "0") return false;
   return dflt;
+}
+
+/**
+ * Measured latency percentiles, set from `pnpm measure:latency` output.
+ *
+ * All three must be present and ordered: a partial measurement is worse than
+ * none, because it looks authoritative while describing a distribution nobody
+ * measured.
+ */
+function measuredLatencyFromEnv(env: NodeJS.ProcessEnv): { p50: number; p90: number; p99: number } | null {
+  const p50 = Number(env.PAPER_LATENCY_P50_MS);
+  const p90 = Number(env.PAPER_LATENCY_P90_MS);
+  const p99 = Number(env.PAPER_LATENCY_P99_MS);
+  const ok = [p50, p90, p99].every((x) => Number.isFinite(x) && x >= 0);
+  if (!ok || !(p50 <= p90 && p90 <= p99)) return null;
+  return { p50, p90, p99 };
 }
 
 function num(v: string | undefined, dflt: number): number {
@@ -80,6 +105,7 @@ export function paperConfigFromEnv(env: NodeJS.ProcessEnv = process.env): PaperR
     baseSlippageBps: 30,
     latencyMinMs: 80,
     latencyMaxMs: 280,
+    measuredLatency: measuredLatencyFromEnv(env),
     markToMarketMs: Math.max(2000, num(env.PAPER_MARK_TO_MARKET_MS, 10_000)),
   };
 }

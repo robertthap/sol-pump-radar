@@ -14,6 +14,7 @@ const config: PaperRuntimeConfig = {
   maxDrawdownPct: 0.25,
   maxDataStalenessMs: 15_000,
   maxPerMintSol: 0.25,
+  measuredLatency: null,
   enableLatency: false,
   feeBps: 100,
   priorityFeeSol: 0.0005,

@@ -1,5 +1,10 @@
 export type { PaperRuntimeConfig } from "./config";
 export {
+  percentiles, latencyProfile, fillLatency, sampleFillLatencyMs,
+  type LatencyStage, type StageSamples, type Percentiles,
+  type LatencyProfile, type FillLatency,
+} from "./latency";
+export {
   canonicalConfig, configHash, measurementIntegrity, tradeProvenance,
   type OutcomeAffectingConfig, type AdaptiveSwitches,
   type MeasurementIntegrity, type TradeProvenance,

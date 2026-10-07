@@ -6,6 +6,7 @@ import { applySlippage } from "../slippage";
 import { curveValueRatio, curveRealizedPnlSol, curveUnrealizedPnlSol, curveExitSettlement } from "../pnl";
 import { txCostSol, type FeeModel } from "../fees";
 import { tradeProvenance, type AdaptiveSwitches } from "../provenance";
+import { fillLatency, sampleFillLatencyMs } from "../latency";
 import { dailyLossSol, riskDayWindow } from "../risk-day";
 import { checkRisk } from "../risk";
 import { assertTransition } from "../state-machine";
@@ -135,11 +136,20 @@ function entryFeeForSlice(
   return openFeeSol * (sliceNotionalSol / openNotionalSol);
 }
 
+/**
+ * Delay a fill by the execution latency (M05).
+ *
+ * Draws from the MEASURED distribution when one exists, and only falls back to
+ * the 80-280ms guess when it does not. A real latency distribution is
+ * right-skewed, so a uniform draw over a range under-samples exactly the slow
+ * fills that cost the most money.
+ */
 async function maybeLatency(config: PaperRuntimeConfig): Promise<number> {
   if (!config.enableLatency) return 0;
-  const lo = config.latencyMinMs;
-  const hi = Math.max(config.latencyMaxMs, lo);
-  const ms = Math.floor(lo + Math.random() * (hi - lo));
+  const latency = config.measuredLatency
+    ? { ...config.measuredLatency, measured: true }
+    : fillLatency(null, { minMs: config.latencyMinMs, maxMs: config.latencyMaxMs });
+  const ms = Math.max(0, sampleFillLatencyMs(latency, Math.random()));
   await new Promise((r) => setTimeout(r, ms));
   return ms;
 }
