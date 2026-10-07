@@ -62,6 +62,26 @@ The cluster used here was a scratch Postgres 16 created for the audit, with all
 
 **Group 3 is complete.**
 
+### Group 4 — honest strategy test
+
+| Item | Status | Commit | Test |
+|---|---|---|---|
+| H14 harness | **built + tested** | `71bd304` | `evaluation.test.ts` (28 pure) |
+| H14 **verdict** | **NOT PRODUCED** | — | no data in this environment |
+
+The harness is validated in BOTH directions: it reports no edge on pure noise
+and finds a planted edge. Guards: time-ordered walk-forward with look-ahead
+*verified* (not assumed), mint-clustered bootstrap, median/trimmed mean beside
+the mean, censored and non-measurement-clean rows excluded.
+
+`pnpm strategy:report` is read-only and writes STRATEGY_REPORT.md. It REFUSES
+a verdict it cannot support — against the test DB it printed
+`NO VERDICT: only 0 clean trades (need 100)`.
+
+**Found:** `scripts/genesis-oos-validate.ts` does not filter `blocked_reason`,
+so it evaluates over gap-censored rows. Only `ablation-report.ts` excluded
+them. The new path excludes both censored and non-measurement-clean rows.
+
 - **LIVE guard** — every check lived in a caller; `rpcSendBase64` consulted no
   flag at all. The guard now sits inside the single broadcast site and fails
   closed. Exhaustive sweep: of 320 flag combinations exactly 3 may broadcast.
@@ -157,12 +177,15 @@ Fix: `packages/trading/src/amounts`, BigInt throughout, throwing rather than
 rounding past the safe range. Rounds half away from zero and rounds fees UP,
 both against us. Wired into `lib/executor/swap-fill.ts`.
 
-## Next — Group 4 (honest strategy test)
+## Next — Group 5 (fresh paper run)
 
-H14 on clean (non-censored) data only: walk-forward/out-of-sample splits with
-no look-ahead, calibration with Brier score and reliability, per-engine
-ablation, pre- vs post-graduation split, all costs and the measured latency,
-and a plain edge/no-edge verdict.
+Freeze one config, start a CLEAN paper session (old results are not comparable
+— H02 and M03 changed how P&L is computed), daily report, and RUNBOOK.md.
+
+**Before the run is worth anything, on your machine:**
+1. `pnpm verify:fee-model` — fee constants unchecked against real transactions
+2. `pnpm measure:latency` — fills still use the 80–280ms guess
+3. `pnpm db:migrate` — 0028/0029 still unapplied
 
 ## Not done / blocked
 
@@ -178,5 +201,5 @@ and a plain edge/no-edge verdict.
 - **Latency is NOT measured.** This container has no live feed, so
   `PAPER_LATENCY_*` are unset and every trade records `latencyMeasured=false`.
   Run `pnpm measure:latency` on your machine with the worker active.
-- Groups 4–5 not started.
-- `pnpm test` is now 660 passing, up from 524 at the start of the audit.
+- Group 5 not started.
+- `pnpm test` is now 688 passing, up from 524 at the start of the audit.
