@@ -242,4 +242,36 @@ describe("paper executor accounting", { skip }, () => {
     assert.equal(f.score, 7);
     assert.equal(f.codeVersion, "cafe123");
   });
+
+  it("a CENSORED close has NULL realized PnL, never a zero that reads as flat", async () => {
+    // The daily report summed realized_pnl_sol with COALESCE(...,0), so a
+    // censored position — closed, outcome unavailable — was reported as a
+    // closed trade with "+0.0000 SOL". Missing data dressed as a real number.
+    // The column must stay NULL so a reader can tell the two apart.
+    const cfg = config();
+    const opened = await trading.openPosition({ mint: "CENSOR", sizeSol: 1 }, cfg, priceAt(FLAT), HEALTHY);
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+
+    await db.getPool().query(
+      "UPDATE paper_positions SET state='CLOSED', closed_at=now(), realized_pnl_sol=NULL WHERE id=$1",
+      [opened.data.positionId.toString()],
+    );
+
+    const row = await db.getPool().query<{ pnl: number | null }>(
+      "SELECT realized_pnl_sol AS pnl FROM paper_positions WHERE id=$1",
+      [opened.data.positionId.toString()],
+    );
+    assert.equal(row.rows[0]!.pnl, null, "a censored close must not carry a numeric PnL");
+
+    // The report's own rule: such rows are excluded from the trade figures.
+    const counted = await db.getPool().query<{ n: string }>(
+      "SELECT count(*) AS n FROM paper_positions WHERE state='CLOSED' AND realized_pnl_sol IS NOT NULL",
+    );
+    const censored = await db.getPool().query<{ n: string }>(
+      "SELECT count(*) AS n FROM paper_positions WHERE state='CLOSED' AND realized_pnl_sol IS NULL",
+    );
+    assert.equal(Number(counted.rows[0]!.n), 0, "censored rows must not count as trades");
+    assert.equal(Number(censored.rows[0]!.n), 1, "...but must still be counted somewhere");
+  });
 });

@@ -71,8 +71,20 @@ async function main() {
       COALESCE((p.entry_features->>'latencyMeasured')::boolean, false) AS latency_measured
     FROM paper_positions p
     WHERE p.state = 'CLOSED'
+      -- A CENSORED close has realized_pnl_sol NULL: it finished, but its
+      -- outcome is unavailable. Summing it as 0 would report "+0.0000 SOL" for
+      -- a P&L nobody knows — missing data dressed as a real number, which is
+      -- the failure this whole report exists to avoid. Counted separately below.
+      AND p.realized_pnl_sol IS NOT NULL
       AND p.closed_at >= ${startIso}::timestamptz
       AND p.closed_at <  ${endIso}::timestamptz
+  `);
+
+  const censoredCloses = await q<{ n: number }>(sql`
+    SELECT count(*)::int AS n FROM paper_positions
+    WHERE state = 'CLOSED' AND realized_pnl_sol IS NULL
+      AND closed_at >= ${startIso}::timestamptz
+      AND closed_at <  ${endIso}::timestamptz
   `);
 
   const wins = closed.filter((t) => t.pnl > 0);
@@ -95,6 +107,10 @@ async function main() {
   console.log(`  average loss        ${losses.length ? pct(avg(losses.map((t) => t.ret))) : "—"}`);
   console.log(`  fees paid           ${fees.toFixed(5)} SOL`);
   console.log(`  net P&L             ${sol(net)}   ${aud}`);
+  const censoredN = censoredCloses[0]?.n ?? 0;
+  if (censoredN > 0) {
+    console.log(`  censored closes     ${censoredN} (outcome unavailable — EXCLUDED from the figures above)`);
+  }
 
   // ------------------------------------------------------------- drawdown ---
   const pf = await q<{ equity: number; peak: number; balance: number }>(sql`
