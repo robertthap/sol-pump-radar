@@ -38,6 +38,36 @@ The cluster used here was a scratch Postgres 16 created for the audit, with all
 
 **Group 1 is complete — all six findings fixed.**
 
+### Group 2 — data integrity
+
+| Code | Status | Commit | Test |
+|---|---|---|---|
+| H07 | **fixed** | `9e128d8` | `flush-queue.test.ts` (14 pure) |
+| H06 | **fixed** | `38a91c1` | `gap-recovery.test.ts` (+3, real mainnet logs) |
+| H04 | **fixed** | `92dcc80` | `gap-recovery.test.ts` (+4) |
+| H05 | **fixed** | `273cbdc` | `gap-window.test.ts` (9 pure) |
+| censored-not-deleted | **fixed** | `77290a8` | `gap-window.test.ts` (+4) |
+
+**Group 2 is complete.**
+
+- **H07** — the flush spliced the batch out of the buffer BEFORE inserting, so
+  any DB failure destroyed up to 500 events; and the watermark advanced at
+  decode time, so the hole was invisible to gap recovery, which starts from the
+  watermark. Now: peek, insert, commit, then advance to that batch's own slot.
+- **H06** — the backfill had no way to see `meta.err`; reverted transactions
+  still emit pump.fun logs, so every gap recovery could manufacture trades that
+  never happened. Now checked on both the signature list and the fetched tx.
+- **H04** — three ways a gap closed without being recovered: the 500-signature
+  page cap exited silently, insert failures were swallowed by `.catch(log)`,
+  and `failedMints` did not block closure. Now `shouldCloseGap` requires
+  complete AND saved; otherwise the gap stays OPEN.
+- **H05** — `getWatermark()` was never called by anything, so every restart
+  began at slot 0 and the downtime produced no gap at all. The reconnect
+  handler logged "coalescing" while discarding the second window. Both fixed.
+- **censoring** — `gapOverlaps` excluded `scope='unrecoverable'`, so
+  permanently missing windows produced labels that looked clean and fed
+  training. Now censored with `blocked_reason`, never deleted, never retried.
+
 Every fix made paper results **harsher**, never better. No threshold, sizing or
 strategy parameter was touched.
 
@@ -94,10 +124,12 @@ Fix: `packages/trading/src/amounts`, BigInt throughout, throwing rather than
 rounding past the safe range. Rounds half away from zero and rounds fees UP,
 both against us. Wired into `lib/executor/swap-fill.ts`.
 
-## Next — Group 2 (data integrity)
+## Next — Group 3 (paper realism and risk)
 
-H07, H06, H04, H05, plus: affected outcomes marked censored, not deleted, and
-excluded from training and evaluation.
+M05 (measure real latency, replace the 80–280ms default), H09 (block entries on
+stale/degraded data; real drawdown limit), H10 paper part, M02 (Sydney risk
+day), M06/M07 (learners off, config hash on every trade), plus one central
+guard proving no path can send a real transaction while LIVE is off.
 
 ## Not done / blocked
 
@@ -111,3 +143,4 @@ excluded from training and evaluation.
 - **The paper ledger's columns are still numeric/float.** M04 made the
   conversion layer exact; converting the schema is a migration, not a patch.
 - Groups 3–5 not started.
+- `pnpm test` is now 603 passing, up from 524 at the start of the audit.
