@@ -30,7 +30,8 @@ export function SessionWalletBalance({
   className = "",
 }: Props) {
   const { mode, demo, refresh } = useTradingMode();
-  const { aud: solAud } = useSolPrice();
+  const { aud: solAud, stale: rateStale, fallback: rateFallback } = useSolPrice();
+  const rate = { stale: rateStale, fallback: rateFallback };
   const [realBalanceSol, setRealBalanceSol] = useState<number | null>(null);
   const [realUnlocked, setRealUnlocked] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
@@ -105,7 +106,7 @@ export function SessionWalletBalance({
           {equity != null ? (
             <p className="mt-0.5 font-mono text-xl font-semibold tracking-tight text-fg">
               {equity.toFixed(3)} <span className="text-sm font-normal text-muted">SOL</span>
-              <span className="ml-2 text-xs font-normal text-muted">{solToAudDisplay(equity, solAud)}</span>
+              <span className="ml-2 text-xs font-normal text-muted">{solToAudDisplay(equity, solAud, rate)}</span>
             </p>
           ) : (
             <p className="text-muted">
@@ -143,8 +144,12 @@ export function SessionWalletBalance({
               <span className="ml-2 text-lg font-normal text-muted">SOL</span>
             </p>
             <p className="mt-1 text-sm text-muted">
-              {solToAudDisplay(equity, solAud)}
-              <span className="ml-2 text-[10px] text-muted">(1 SOL = A${solAud.toFixed(0)})</span>
+              {solToAudDisplay(equity, solAud, rate)}
+              {!rate.fallback && (
+                <span className="ml-2 text-[10px] text-muted">
+                  (1 SOL = A${solAud.toFixed(0)}{rate.stale ? ", stale" : ""})
+                </span>
+              )}
             </p>
           </>
         ) : (

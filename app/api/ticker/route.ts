@@ -208,6 +208,8 @@ async function buildTicker(): Promise<TickerResponse> {
     signalMode: signalModeStatus(),
     solUsd: sol.usd,
     solAud: sol.aud,
+    solPriceStale: sol.stale,
+    solPriceFallback: sol.usingFallback,
     portfolio,
     positions,
     closedPositions,

@@ -61,8 +61,15 @@ export async function getSolAud(): Promise<number> {
   return cache.aud;
 }
 
-export function solPriceCacheSnapshot(): { usd: number; aud: number; ageMs: number } {
-  return { usd: cache.usd, aud: cache.aud, ageMs: cache.at ? Date.now() - cache.at : 0 };
+/**
+ * Display-path snapshot. Carries the freshness verdict with the numbers so a
+ * caller cannot render the fallback rate as though it were live (M01).
+ */
+export function solPriceCacheSnapshot(): {
+  usd: number; aud: number; ageMs: number | null; usingFallback: boolean; stale: boolean;
+} {
+  const f = priceFreshnessAt(cache.at, Date.now());
+  return { usd: cache.usd, aud: cache.aud, ageMs: f.ageMs, usingFallback: f.usingFallback, stale: f.stale };
 }
 
 /** Beyond this age the cached SOL price is treated as stale (3× the refresh TTL). */
@@ -85,19 +92,43 @@ export type SolUsdFreshness = {
  * never-fetched (fallback) price instead of silently using the wrong value —
  * the failure mode behind the historical 2.24× mcap mismark.
  */
+export type PriceFreshness = {
+  /** Null when never fetched: there is no age, and 0 would claim "just fetched". */
+  ageMs: number | null;
+  everFetched: boolean;
+  usingFallback: boolean;
+  stale: boolean;
+};
+
+/**
+ * The single freshness rule for the cached SOL price, pure so it can be tested
+ * without reaching into module state (M01).
+ *
+ * A never-fetched cache has NO age. Reporting 0 was the bug: it is the strongest
+ * possible claim of freshness, and it made the dashboard print the static A$230
+ * fallback as a live rate with no warning. A clock that jumps backwards is
+ * clamped to 0 rather than going negative and reading fresher than new.
+ */
+export function priceFreshnessAt(cacheAt: number, now: number): PriceFreshness {
+  const everFetched = cacheAt > 0;
+  if (!everFetched) return { ageMs: null, everFetched: false, usingFallback: true, stale: true };
+  const ageMs = Math.max(0, now - cacheAt);
+  return { ageMs, everFetched: true, usingFallback: false, stale: ageMs >= SOL_USD_STALE_MS };
+}
+
 export function solUsdFreshness(): SolUsdFreshness {
-  const everFetched = cache.at > 0;
-  const ageMs = everFetched ? Date.now() - cache.at : Infinity;
+  const f = priceFreshnessAt(cache.at, Date.now());
   return {
     usd: cache.usd,
-    ageMs,
-    everFetched,
-    usingFallback: !everFetched,
-    fresh: everFetched && ageMs < SOL_USD_STALE_MS,
+    // Infinity keeps the historical contract for callers comparing ages.
+    ageMs: f.ageMs ?? Infinity,
+    everFetched: f.everFetched,
+    usingFallback: f.usingFallback,
+    fresh: !f.stale,
   };
 }
 
 /** @deprecated Use solPriceCacheSnapshot(). */
 export function solUsdCacheSnapshot(): { usd: number; ageMs: number } {
-  return { usd: cache.usd, ageMs: cache.at ? Date.now() - cache.at : 0 };
+  return { usd: cache.usd, ageMs: priceFreshnessAt(cache.at, Date.now()).ageMs ?? 0 };
 }

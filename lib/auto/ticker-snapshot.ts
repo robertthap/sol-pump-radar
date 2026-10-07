@@ -258,6 +258,9 @@ export type TickerResponse = {
   signalMode: { effective: "launch" | "hybrid" | "profit"; envDefault: string };
   solUsd: number;
   solAud: number;
+  /** M01: the AUD/USD rate is stale or the never-fetched fallback — do not render as live. */
+  solPriceStale: boolean;
+  solPriceFallback: boolean;
   portfolio: TickerPortfolio;
   positions: TickerPosition[];
   /** Recent closed trades for the initial paint; the Closed tab loads the complete history. */
