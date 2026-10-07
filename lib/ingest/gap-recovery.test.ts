@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { recoverGapForMints, type RpcClient, type AtRiskMint } from "./gap-recovery";
 
 type SigPage = Array<{ signature: string; slot: number; blockTime: number | null }>;
@@ -8,7 +10,7 @@ function makeMockRpc(opts: {
   /** Map of pda → ordered (newest→oldest) signatures. */
   sigsByPda: Map<string, SigPage>;
   /** Override txs for specific signatures (default = empty logMessages, decoder returns []). */
-  txByCount?: Map<string, { logs: string[] | null } | null>;
+  txByCount?: Map<string, { logs: string[] | null; err?: unknown } | null>;
   /** Throw when called on this pda. */
   throwsOn?: Set<string>;
   /** Counters the test can inspect after running. */
@@ -46,7 +48,7 @@ function makeMockRpc(opts: {
       return {
         slot,
         blockTime: 1700000000,
-        meta: { logMessages: tx?.logs ?? [] },
+        meta: { logMessages: tx?.logs ?? [], err: tx?.err ?? null },
       };
     },
   };
@@ -193,4 +195,70 @@ test("recoverGapForMints: respects MAX_SIGNATURES_PER_MINT safety cap", async ()
   assert.ok(counts.txCalls <= 500, `expected ≤500 tx fetches, got ${counts.txCalls}`);
   // And page calls should be around 5 (500/100)
   assert.ok(counts.sigCalls <= 6, `expected ≤6 sig page calls, got ${counts.sigCalls}`);
+});
+
+/**
+ * H06 — failed on-chain transactions must never become trades.
+ *
+ * The live WebSocket path checks `n.err` and returns. The backfill never did:
+ * GapRpc did not even expose `meta.err`, so a reverted transaction's log
+ * messages — which pump.fun still emits up to the point of failure — were
+ * parsed into real trade events and inserted as if they had happened.
+ */
+const FIXTURE_MINT = "EecawWtSAu7kanLfFqPRTF5PaaRCMFYRxPrvGfyGpump";
+const REAL = JSON.parse(
+  readFileSync(join(__dirname, "..", "pump", "__fixtures__", "trade-logs.json"), "utf8"),
+) as Record<string, { signature: string; logs: string[] }>;
+
+test("H06: a failed transaction's logs never become events (backfill)", async () => {
+  const fixture = REAL.mayhem_buy!;
+  const counts = { sigCalls: 0, txCalls: 0, getTxForSlot: [] as number[] };
+  // Same real logs twice: one transaction succeeded, one reverted.
+  const rpc = makeMockRpc({
+    sigsByPda: new Map([["PDA1", [
+      { signature: "s80", slot: 80, blockTime: 1 },
+      { signature: "s70", slot: 70, blockTime: 1, err: { InstructionError: [0, "Custom"] } },
+    ]]]),
+    txByCount: new Map([
+      ["s80", { logs: fixture.logs }],
+      ["s70", { logs: fixture.logs, err: { InstructionError: [0, "Custom"] } }],
+    ]),
+    counts,
+  });
+  const m: AtRiskMint = { mint: FIXTURE_MINT, bondingCurvePda: "PDA1" };
+  const r = await recoverGapForMints(rpc, { fromSlot: 0n, toSlot: 100n }, [m]);
+
+  assert.equal(
+    r.events.every((e) => e.signature !== "s70"), true,
+    "a reverted transaction produced trade events",
+  );
+  assert.equal(
+    counts.getTxForSlot.includes(70), false,
+    "an errored signature should be skipped without even fetching the transaction",
+  );
+});
+
+test("H06: a transaction that only reveals its error on fetch is still rejected", async () => {
+  const fixture = REAL.mayhem_buy!;
+  const counts = { sigCalls: 0, txCalls: 0, getTxForSlot: [] as number[] };
+  // getSignaturesForAddress omitted `err` (older RPC); getTransaction reports it.
+  const rpc = makeMockRpc({
+    sigsByPda: new Map([["PDA1", [{ signature: "s80", slot: 80, blockTime: 1 }]]]),
+    txByCount: new Map([["s80", { logs: fixture.logs, err: { InstructionError: [0, "Custom"] } }]]),
+    counts,
+  });
+  const m: AtRiskMint = { mint: FIXTURE_MINT, bondingCurvePda: "PDA1" };
+  const r = await recoverGapForMints(rpc, { fromSlot: 0n, toSlot: 100n }, [m]);
+  assert.equal(r.events.length, 0, "meta.err must reject the transaction after fetch");
+});
+
+test("H06: a successful transaction with the same logs still recovers", async () => {
+  const fixture = REAL.mayhem_buy!;
+  const rpc = makeMockRpc({
+    sigsByPda: new Map([["PDA1", [{ signature: "s80", slot: 80, blockTime: 1 }]]]),
+    txByCount: new Map([["s80", { logs: fixture.logs }]]),
+  });
+  const m: AtRiskMint = { mint: FIXTURE_MINT, bondingCurvePda: "PDA1" };
+  const r = await recoverGapForMints(rpc, { fromSlot: 0n, toSlot: 100n }, [m]);
+  assert.ok(r.events.length > 0, "the guard must not reject healthy transactions");
 });

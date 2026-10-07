@@ -43,7 +43,11 @@ export interface RpcClient {
   getSignaturesForAddress(
     address: string,
     opts?: { before?: string; until?: string; limit?: number },
-  ): Promise<Array<{ signature: string; slot: number; blockTime: number | null }>>;
+  ): Promise<Array<{
+    signature: string; slot: number; blockTime: number | null;
+    /** H06: non-null when the transaction REVERTED. Such a transaction never traded. */
+    err?: unknown;
+  }>>;
 
   /** Returns the parsed transaction with log messages, or null if not found. */
   getTransaction(
@@ -51,7 +55,8 @@ export interface RpcClient {
   ): Promise<{
     slot: number;
     blockTime: number | null;
-    meta: { logMessages: string[] | null } | null;
+    /** H06: `meta.err` is non-null when the transaction reverted. */
+    meta: { logMessages: string[] | null; err?: unknown } | null;
   } | null>;
 }
 
@@ -113,7 +118,17 @@ async function recoverOneMint(
       // Beyond the upper bound (live events that beat our gap close) — skip.
       if (slot > gap.toSlot) continue;
 
+      // H06 — a REVERTED transaction never traded. pump.fun still emits log
+      // messages up to the point of failure, so parsing them would manufacture
+      // trades that never happened. The live WS path checks `n.err`; this is
+      // the same guard for backfill. Checked here first so a known-failed
+      // signature does not even cost an RPC round trip.
+      if (sig.err != null) continue;
+
       const tx = await rpc.getTransaction(sig.signature);
+      // Not every RPC returns `err` on the signature list, so re-check the
+      // fetched transaction before trusting its logs.
+      if (tx?.meta?.err != null) continue;
       const logs = tx?.meta?.logMessages ?? null;
       if (!logs || logs.length === 0) continue;
       // Unlike the live WS, replay CAN see the real chain time. Only claim

@@ -38,8 +38,10 @@ export function makeHttpRpcClient(httpUrl: string): RpcClient {
       if (opts?.until) params[1].until = opts.until;
       if (opts?.limit != null) params[1].limit = opts.limit;
       const r = (await rpcCall("getSignaturesForAddress", params)) as
-        | Array<{ signature: string; slot: number; blockTime: number | null }>
+        | Array<{ signature: string; slot: number; blockTime: number | null; err?: unknown }>
         | null;
+      // H06: `err` is carried through so the caller can drop reverted
+      // transactions before paying for getTransaction.
       return Array.isArray(r) ? r : [];
     },
 
@@ -52,13 +54,14 @@ export function makeHttpRpcClient(httpUrl: string): RpcClient {
       ])) as {
         slot?: number;
         blockTime?: number | null;
-        meta?: { logMessages?: string[] | null } | null;
+        meta?: { logMessages?: string[] | null; err?: unknown } | null;
       } | null;
       if (!r) return null;
       return {
         slot: r.slot ?? 0,
         blockTime: r.blockTime ?? null,
-        meta: r.meta ? { logMessages: r.meta.logMessages ?? null } : null,
+        // H06: preserve `err` — a reverted transaction's logs must not be parsed.
+        meta: r.meta ? { logMessages: r.meta.logMessages ?? null, err: r.meta.err ?? null } : null,
       };
     },
   };
