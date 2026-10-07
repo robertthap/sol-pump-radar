@@ -78,6 +78,36 @@ export interface GapRecoveryResult {
   events: ParsedPumpEvent[];
   failedMints: string[];
   perMintRecovered: Map<string, number>;
+  /**
+   * H04: mints whose page walk hit MAX_SIGNATURES_PER_MINT and stopped early.
+   * Their window was NOT fully walked, so events inside it may still be missing
+   * even though no error was raised.
+   */
+  truncatedMints: string[];
+  /**
+   * H04: true only when EVERY at-risk mint was walked to the end of the window
+   * without failing. A gap may only be closed on a complete recovery — a gap
+   * closed wrongly is never retried, so the hole becomes permanent and silent.
+   */
+  complete: boolean;
+}
+
+/**
+ * Whether a gap may be marked recovered (H04) — PURE.
+ *
+ * Both halves must hold: the recovery walked everything, AND the events it
+ * found were actually written. Either one alone closes a gap over missing data.
+ */
+export function shouldCloseGap(
+  result: Pick<GapRecoveryResult, "complete" | "failedMints" | "truncatedMints">,
+  insertSucceeded: boolean,
+): boolean {
+  return (
+    insertSucceeded &&
+    result.complete &&
+    result.failedMints.length === 0 &&
+    result.truncatedMints.length === 0
+  );
 }
 
 /** Safety cap: never page more than this many signatures per mint. A single
@@ -93,10 +123,13 @@ async function recoverOneMint(
   rpc: RpcClient,
   gap: GapWindow,
   m: AtRiskMint,
-): Promise<{ events: ParsedPumpEvent[]; count: number }> {
+): Promise<{ events: ParsedPumpEvent[]; count: number; truncated: boolean }> {
   const out: ParsedPumpEvent[] = [];
   let before: string | undefined;
   let scanned = 0;
+  // Set when the walk ends because it ran out of window or signatures, rather
+  // than because MAX_SIGNATURES_PER_MINT stopped it.
+  let reachedEnd = false;
 
   while (scanned < MAX_SIGNATURES_PER_MINT) {
     const page = await rpc.getSignaturesForAddress(m.bondingCurvePda, {
@@ -104,7 +137,7 @@ async function recoverOneMint(
       until: gap.untilSig ?? undefined,
       limit: SIGNATURES_PAGE_LIMIT,
     });
-    if (!page.length) break;
+    if (!page.length) { reachedEnd = true; break; }
     scanned += page.length;
 
     let stopped = false;
@@ -152,13 +185,16 @@ async function recoverOneMint(
       }
     }
 
-    if (stopped) break;
+    if (stopped) { reachedEnd = true; break; }
     // Page is sorted newest→oldest; cursor is the last (oldest) signature.
     before = page[page.length - 1]!.signature;
-    if (page.length < SIGNATURES_PAGE_LIMIT) break;
+    // A short page means the address has no older signatures: the walk is done.
+    if (page.length < SIGNATURES_PAGE_LIMIT) { reachedEnd = true; break; }
   }
 
-  return { events: out, count: out.length };
+  // H04: leaving the loop because the safety cap ran out is NOT the same as
+  // walking the window. Say which one happened.
+  return { events: out, count: out.length, truncated: !reachedEnd };
 }
 
 /**
@@ -178,18 +214,24 @@ export async function recoverGapForMints(
   const events: ParsedPumpEvent[] = [];
   const failedMints: string[] = [];
   const perMintRecovered = new Map<string, number>();
-  if (mints.length === 0) return { events, failedMints, perMintRecovered };
-  if (gap.toSlot < gap.fromSlot) return { events, failedMints, perMintRecovered };
+  const truncatedMints: string[] = [];
+  // Nothing at risk and nothing to walk: vacuously complete.
+  if (mints.length === 0) return { events, failedMints, perMintRecovered, truncatedMints, complete: true };
+  if (gap.toSlot < gap.fromSlot) return { events, failedMints, perMintRecovered, truncatedMints, complete: true };
 
   for (const m of mints) {
     try {
       const r = await recoverOneMint(rpc, gap, m);
       events.push(...r.events);
       perMintRecovered.set(m.mint, r.count);
+      if (r.truncated) truncatedMints.push(m.mint);
     } catch {
       failedMints.push(m.mint);
     }
   }
 
-  return { events, failedMints, perMintRecovered };
+  return {
+    events, failedMints, perMintRecovered, truncatedMints,
+    complete: failedMints.length === 0 && truncatedMints.length === 0,
+  };
 }

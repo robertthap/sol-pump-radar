@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { recoverGapForMints, type RpcClient, type AtRiskMint } from "./gap-recovery";
+import { recoverGapForMints, shouldCloseGap, type RpcClient, type AtRiskMint } from "./gap-recovery";
 
 type SigPage = Array<{ signature: string; slot: number; blockTime: number | null }>;
 
@@ -261,4 +261,76 @@ test("H06: a successful transaction with the same logs still recovers", async ()
   const m: AtRiskMint = { mint: FIXTURE_MINT, bondingCurvePda: "PDA1" };
   const r = await recoverGapForMints(rpc, { fromSlot: 0n, toSlot: 100n }, [m]);
   assert.ok(r.events.length > 0, "the guard must not reject healthy transactions");
+});
+
+/**
+ * H04 — a gap is only "recovered" when it is FULLY recovered AND saved.
+ *
+ * Three ways the old path closed a gap it had not recovered:
+ *   1. the per-mint page walk hit MAX_SIGNATURES_PER_MINT and stopped, with no
+ *      way for the caller to tell truncation from a complete walk;
+ *   2. the caller swallowed insert failures with .catch(log) and then closed
+ *      the gap reporting the full recovered count;
+ *   3. failedMints was non-empty and the gap closed anyway, with the failure
+ *      recorded only as free text.
+ * A gap closed wrongly is never retried, so the hole becomes permanent AND
+ * invisible.
+ */
+test("H04: a truncated per-mint walk is reported, not silently complete", async () => {
+  // 600 signatures in-window against a 500 cap: the walk cannot finish.
+  const many = Array.from({ length: 600 }, (_, i) => ({
+    signature: `s${900 - i}`, slot: 900 - i, blockTime: 1,
+  }));
+  const rpc = makeMockRpc({ sigsByPda: new Map([["PDA1", many]]) });
+  const m: AtRiskMint = { mint: FIXTURE_MINT, bondingCurvePda: "PDA1" };
+  const r = await recoverGapForMints(rpc, { fromSlot: 0n, toSlot: 1000n }, [m]);
+
+  assert.ok(
+    r.truncatedMints.includes(FIXTURE_MINT),
+    "hitting the safety cap must be reported — the window was NOT fully walked",
+  );
+  assert.equal(r.complete, false, "a truncated recovery is not complete");
+});
+
+test("H04: a fully walked window is complete", async () => {
+  const rpc = makeMockRpc({
+    sigsByPda: new Map([["PDA1", [{ signature: "s80", slot: 80, blockTime: 1 }]]]),
+    txByCount: new Map([["s80", { logs: REAL.mayhem_buy!.logs }]]),
+  });
+  const m: AtRiskMint = { mint: FIXTURE_MINT, bondingCurvePda: "PDA1" };
+  const r = await recoverGapForMints(rpc, { fromSlot: 0n, toSlot: 100n }, [m]);
+  assert.equal(r.truncatedMints.length, 0);
+  assert.equal(r.complete, true);
+});
+
+test("H04: an RPC failure on any mint makes the recovery incomplete", async () => {
+  const rpc = makeMockRpc({
+    sigsByPda: new Map([["PDA_OK", [{ signature: "s80", slot: 80, blockTime: 1 }]]]),
+    txByCount: new Map([["s80", { logs: REAL.mayhem_buy!.logs }]]),
+    throwsOn: new Set(["PDA_BAD"]),
+  });
+  const r = await recoverGapForMints(rpc, { fromSlot: 0n, toSlot: 100n }, [
+    { mint: FIXTURE_MINT, bondingCurvePda: "PDA_OK" },
+    { mint: "M2", bondingCurvePda: "PDA_BAD" },
+  ]);
+  assert.deepEqual(r.failedMints, ["M2"]);
+  assert.equal(r.complete, false, "one failed mint means the gap is not recovered");
+  assert.ok(r.events.length > 0, "the healthy mint's events are still returned");
+});
+
+test("H04: the gap only closes when complete AND the insert succeeded", async () => {
+  const complete = { complete: true, failedMints: [], truncatedMints: [] };
+  assert.equal(shouldCloseGap(complete, true), true);
+  // Everything that must keep it open:
+  assert.equal(shouldCloseGap(complete, false), false, "insert failed — nothing was saved");
+  assert.equal(
+    shouldCloseGap({ ...complete, complete: false }, true), false,
+    "incomplete recovery must stay open for retry",
+  );
+  assert.equal(
+    shouldCloseGap({ ...complete, complete: false, failedMints: ["M2"] }, true), false,
+  );
+  assert.equal(
+    shouldCloseGap({ ...complete, complete: false, truncatedMints: ["M1"] }, true), false,
+  );
 });

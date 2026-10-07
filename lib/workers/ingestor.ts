@@ -17,7 +17,7 @@ import { appendEvent } from "@spr/core";
 import { insertIngestFacts } from "@/lib/db/repos/ingest-facts";
 import { getDb } from "@/lib/db/client";
 import { upsertWatermark, openGap, closeGap, markUnrecoverable } from "@/lib/db/repos/ingest-gaps";
-import { recoverGapForMints, type AtRiskMint } from "@/lib/ingest/gap-recovery";
+import { recoverGapForMints, shouldCloseGap, type AtRiskMint } from "@/lib/ingest/gap-recovery";
 import { advanceWatermark, batchWatermark, commitBatch, peekBatch } from "@/lib/workers/flush-queue";
 import { makeHttpRpcClient } from "@/lib/rpc/http-client";
 
@@ -253,16 +253,34 @@ export async function startIngestor() {
           { fromSlot, toSlot, untilSig: info.lastSig },
           mints,
         );
+        // H04 — the insert's success decides whether anything was recovered.
+        // This used to swallow the error and then close the gap reporting the
+        // full count, so a failed insert produced a CLOSED gap over events that
+        // were never written. A closed gap is never retried.
+        let insertSucceeded = true;
         if (r.events.length > 0) {
           // Backfilled events go ONLY through insertEvents — skip chart push,
           // tokens upsert, launch-hot, etc. (they'd trip the chart's
           // sanitizeAscending guard on stale slots, and the rest are live-only paths).
-          await insertEvents(r.events).catch((e) => log.warn("recovered-events insert failed", { err: String(e) }));
+          insertSucceeded = await insertEvents(r.events).then(
+            () => true,
+            (e) => { log.warn("recovered-events insert failed", { err: String(e) }); return false; },
+          );
         }
-        await closeGap(gapId, r.events.length, r.failedMints.length > 0 ? `failed: ${r.failedMints.length}` : undefined);
-        log.info("gap recovery complete", {
-          recovered: r.events.length, atRiskMints: mints.length, failedMints: r.failedMints.length,
-        });
+        const detail = {
+          recovered: r.events.length, atRiskMints: mints.length,
+          failedMints: r.failedMints.length, truncatedMints: r.truncatedMints.length,
+          insertSucceeded,
+        };
+        if (shouldCloseGap(r, insertSucceeded)) {
+          await closeGap(gapId, r.events.length);
+          log.info("gap recovery complete", detail);
+        } else {
+          // Left OPEN deliberately: a partial, truncated or unsaved recovery is
+          // a gap we still have. Closing it here would make the hole permanent
+          // and invisible to the mechanism that exists to find it.
+          log.warn("gap recovery incomplete; gap left OPEN for retry", detail);
+        }
       } catch (e) {
         log.warn("gap recovery failed", { err: String(e) });
         await markUnrecoverable(gapId, "recovery threw").catch(() => undefined);
