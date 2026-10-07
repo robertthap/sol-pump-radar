@@ -58,8 +58,38 @@ export async function episodeStatuses(sessionId: string): Promise<Map<string,str
   const result = await getDb().execute(sql`SELECT episode_key,status FROM research_episodes WHERE session_id=${sessionId}::bigint`);
   return new Map((result as unknown as { rows: Array<{ episode_key: string; status: string }> }).rows.map((r) => [r.episode_key,r.status]));
 }
+/**
+ * Coerce a value to a bigint id, or null if it is not one.
+ *
+ * Callers build these from JSONB (`entry_features`), where a key may simply be
+ * absent. `String(undefined)` yields the literal STRING "undefined", which
+ * Postgres rejects with `invalid input syntax for type bigint: "undefined"` and
+ * which aborts the whole surrounding tick. The value `undefined` is NOT the
+ * same failure — it binds as a missing parameter and raises a syntax error —
+ * so the stringified forms are what this exists to catch.
+ *
+ * Kept as text, never Number(): bigserial can exceed 2^53, and coercing through
+ * a double would silently change the id.
+ */
+export function bigintIdOrNull(value: unknown): string | null {
+  if (typeof value === "bigint") return value > 0n ? value.toString() : null;
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? String(value) : null;
+  }
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  // Digits only: rejects "undefined", "null", "NaN", "", "12.5", "-3", "1e3",
+  // "0x1f" and "12abc" without a round trip through Number.
+  if (!/^[0-9]+$/.test(text)) return null;
+  return /^0+$/.test(text) ? null : text.replace(/^0+/, "");
+}
+
 export async function finishResearchEpisode(sessionId: string, key: string, status: string, reason: string) {
-  await getDb().execute(sql`UPDATE research_episodes SET status=${status},reason=${reason},updated_at=now() WHERE session_id=${sessionId}::bigint AND episode_key=${key}`);
+  const id = bigintIdOrNull(sessionId);
+  // No usable session id means there is no episode row this could match. Doing
+  // nothing is correct; sending "undefined" aborted the caller's entire tick.
+  if (id == null) return;
+  await getDb().execute(sql`UPDATE research_episodes SET status=${status},reason=${reason},updated_at=now() WHERE session_id=${id}::bigint AND episode_key=${key}`);
 }
 export async function markResearchPosition(id: string, features: Record<string,unknown>, price: number | null, pnl: number | null) {
   await getDb().execute(sql`UPDATE paper_positions SET current_price=${price},unrealized_pnl_sol=${pnl ?? 0},

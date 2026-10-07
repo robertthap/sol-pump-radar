@@ -10,14 +10,16 @@ import {
   paperResearchFailureFee,
 } from "@/lib/paper/engine";
 import { updateStats, type AutoSessionDto } from "@/lib/db/repos/auto-sessions";
-import { episodeStatuses, finishResearchEpisode, markResearchPosition, recordResearchEpisode, researchLiveEvents, researchPositions, type ResearchPosition } from "@/lib/db/repos/research-bot";
+import { bigintIdOrNull, episodeStatuses, finishResearchEpisode, markResearchPosition, recordResearchEpisode, researchLiveEvents, researchPositions, type ResearchPosition } from "@/lib/db/repos/research-bot";
 import { CURVE_K, STRATEGIES, type ExecutionSetting, type TapeEvent } from "@/lib/strategies/catalog";
+import { logger } from "@/lib/log";
 import { researchStrategy } from "@/lib/strategies/bot-config";
 import { candidates } from "@/lib/strategies/replay";
 import { beforeTime, buyAt, costs, fillState, prepareTape, randomFor, sellAt, slotAt, spot } from "@/lib/strategies/pool";
 import { EXIT_TAU, exitFeatures, shouldScaleIn, treeHazard } from "@/lib/strategies/features";
 import { tradingFeeSol } from "@spr/trading";
 
+const log = logger("research-trader");
 const finite = (v: unknown, fallback = 0) => typeof v === "number" && Number.isFinite(v) ? v : fallback;
 const proxy = (s: { x: number; k: number }) => Math.sqrt(spot(s) * CURVE_K);
 const permitBuys = async () => (await readState()).state !== "HALTED";
@@ -138,6 +140,13 @@ async function managePosition(p: ResearchPosition, rows: TapeEvent[], active: Au
     f.research_status = "CENSORED"; f.research_reason = reason;
     const closed = await paperResearchCensor({ id: p.id, reason, ts: Date.now() / 1000 });
     if (closed.ok) {
+      // A position whose entry_features carry no session_id has no episode row
+      // to finish. finishResearchEpisode ignores it; say so, because silently
+      // skipping a ledger update is worth seeing in the log.
+      if (bigintIdOrNull(f.session_id) == null) {
+        log.warn("censored position has no usable session_id; episode not finished",
+          { position: p.id, mint: p.mint });
+      }
       await finishResearchEpisode(String(f.session_id), String(f.research_episode), "CENSORED", reason);
     }
   };
