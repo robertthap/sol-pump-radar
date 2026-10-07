@@ -177,15 +177,43 @@ Fix: `packages/trading/src/amounts`, BigInt throughout, throwing rather than
 rounding past the safe range. Rounds half away from zero and rounds fees UP,
 both against us. Wired into `lib/executor/swap-fill.ts`.
 
-## Next — Group 5 (fresh paper run)
+### Group 5 — fresh paper run
 
-Freeze one config, start a CLEAN paper session (old results are not comparable
-— H02 and M03 changed how P&L is computed), daily report, and RUNBOOK.md.
+| Item | Status | Commit |
+|---|---|---|
+| daily report | **built** | `d03a1a8` |
+| config-freeze detection | **built** | `d03a1a8` |
+| config.example | **updated** | `d03a1a8` |
+| RUNBOOK.md | **written** | `a0b2e1f` |
+| AUDIT_REPORT.md | **written** | `a0b2e1f` |
+| **the run itself** | **NOT STARTED** | needs your machine |
 
-**Before the run is worth anything, on your machine:**
-1. `pnpm verify:fee-model` — fee constants unchecked against real transactions
-2. `pnpm measure:latency` — fills still use the 80–280ms guess
-3. `pnpm db:migrate` — 0028/0029 still unapplied
+**M01 REOPENED AND RE-FIXED.** Running the new daily report printed `A$0.00`
+where it should have said the rate was unavailable. `getSolUsd()` stamped
+`at: now` onto the FALLBACK values on a failed fetch, so the hardcoded A$230
+looked like a live rate — defeating the Group 1 fix. The first fix corrected
+how freshness was *computed*; that line corrupted the input it computed from,
+which is why the original tests could not see it. `at` now means last
+SUCCESSFUL fetch only.
+
+## Audit complete — all five groups
+
+Deliverables: `AUDIT_REPORT.md`, `STRATEGY_REPORT.md` (no verdict — see below),
+`RUNBOOK.md`, `.env.example`, and the daily report script.
+
+## What YOU must do — in this order
+
+```bash
+pnpm db:up && pnpm db:migrate   # 0028/0029 still unapplied
+pnpm verify:fee-model           # fee constants unchecked against real trades
+pnpm measure:latency            # fills still use the 80-280ms GUESS
+# set PAPER_LATENCY_P50/P90/P99_MS and GIT_SHA in .env, then freeze it
+# Reset the paper portfolio, start the worker, run for days
+pnpm daily:report               # check RUN INTEGRITY says "clean"
+pnpm strategy:report            # the verdict
+```
+
+**Do not read any paper result as evidence until the first three are done.**
 
 ## Not done / blocked
 
@@ -201,5 +229,5 @@ Freeze one config, start a CLEAN paper session (old results are not comparable
 - **Latency is NOT measured.** This container has no live feed, so
   `PAPER_LATENCY_*` are unset and every trade records `latencyMeasured=false`.
   Run `pnpm measure:latency` on your machine with the worker active.
-- Group 5 not started.
-- `pnpm test` is now 688 passing, up from 524 at the start of the audit.
+
+- `pnpm test` is now 689 passing, up from 524 at the start of the audit.
