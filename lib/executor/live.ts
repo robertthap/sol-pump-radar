@@ -16,6 +16,7 @@ import {
 } from "@/lib/db/repos/live-trades";
 import { fetchTokenBalance } from "@/lib/wallet/holdings";
 import { getEffectiveTradeLimits } from "@/lib/db/repos/settings";
+import { assertMayBroadcast } from "@/lib/runtime/broadcast-guard";
 
 const log = logger("executor:live");
 
@@ -88,7 +89,25 @@ async function checkCaps(sizeSol: number): Promise<GuardOk | GuardFail> {
   return { ok: true };
 }
 
-async function rpcSendBase64(rpcUrl: string, base64: string): Promise<string> {
+/**
+ * The ONLY place a signed transaction reaches the network. Exported so the
+ * central guard can be proven to fire HERE, at the choke point, rather than
+ * only in isolation — a guard that is merely unit-tested does not show that it
+ * is actually installed.
+ */
+export async function rpcSendBase64(rpcUrl: string, base64: string): Promise<string> {
+  // THE central guard. Every other LIVE check in this codebase lives in a
+  // caller, which protects the paths someone remembered to gate; this sits at
+  // the choke point itself, so a new call path cannot reach the network by
+  // forgetting one. Fails closed, and throws LiveBroadcastBlocked rather than
+  // anything a catch would mistake for RPC trouble.
+  const e = env();
+  assertMayBroadcast({
+    runtimeProfile: e.RUNTIME_PROFILE,
+    liveExecution: e.LIVE_EXECUTION,
+    liveDryRun: e.LIVE_DRY_RUN,
+    liveConfirm: e.LIVE_CONFIRM,
+  });
   const r = await fetch(rpcUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
