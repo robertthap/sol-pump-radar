@@ -85,10 +85,17 @@ export async function PUT(req: Request) {
     });
     invalidateCache("settings:mode");
     invalidateCache("settings:mode-lite");
-    return NextResponse.json(
-      { ok: true, queued: true, correlationId, statusUrl: `/api/trade/status/${correlationId}` },
-      { status: 202 },
-    );
+    // Fall THROUGH when a reset was asked for in the same request. This block
+    // used to return unconditionally, so {resetDemo:true, demoStartSol:N} set
+    // the balance and silently dropped the reset — the caller got a 202 and no
+    // wipe. The settings event is queued first, so the worker applies the new
+    // starting balance before the reset that uses it.
+    if (body.resetDemo !== true) {
+      return NextResponse.json(
+        { ok: true, queued: true, correlationId, statusUrl: `/api/trade/status/${correlationId}` },
+        { status: 202 },
+      );
+    }
   }
   if (body.resetDemo === true) {
     const correlationId = `demo-reset-${randomUUID()}`;

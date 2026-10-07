@@ -171,13 +171,23 @@ export type DemoResetResult = {
   correlationId: string;
 };
 
-export async function submitDemoReset(): Promise<DemoResetResult> {
+/**
+ * Reset the demo account, optionally to a new starting balance.
+ *
+ * `startSol` omitted means keep whatever the account is already set to — a
+ * reset should not silently change the stake. When given, it is applied in the
+ * SAME request as the reset, so the new balance and the wipe land together
+ * rather than as two states an observer could catch in between.
+ */
+export async function submitDemoReset(startSol?: number): Promise<DemoResetResult> {
   let r: Response;
   try {
     r = await fetch("/api/settings/mode", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ resetDemo: true }),
+      body: JSON.stringify(
+        startSol != null ? { resetDemo: true, demoStartSol: startSol } : { resetDemo: true },
+      ),
     });
   } catch (e) {
     const msg =

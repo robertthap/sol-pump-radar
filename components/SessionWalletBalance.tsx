@@ -64,16 +64,39 @@ export function SessionWalletBalance({
     return () => window.clearInterval(id);
   }, [mode, loadReal]);
 
+  /**
+   * Starting balance for the next reset. Empty means "leave it as it is" — a
+   * reset should not silently change the stake just because this box was
+   * rendered. Seeded from the account's current startSol so the field shows
+   * what is actually in force rather than a hardcoded 10.
+   */
+  const [startSolInput, setStartSolInput] = useState("");
+  const currentStartSol = demo?.startSol ?? null;
+
   async function resetDemo() {
+    const trimmed = startSolInput.trim();
+    let startSol: number | undefined;
+    if (trimmed !== "") {
+      const parsed = Number(trimmed);
+      // Same bounds the API enforces; checked here so the operator gets the
+      // message before the round trip rather than a 400.
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) {
+        window.alert("Starting balance must be a number between 0 and 10,000 SOL.");
+        return;
+      }
+      startSol = parsed;
+    }
+    const target = startSol ?? currentStartSol;
     if (
       !window.confirm(
-        "Reset demo account to a fresh start? This wipes ALL demo holdings, closed trades, PnL and balance. System learning is kept.",
+        `Reset demo account to ${target != null ? `${target} SOL` : "a fresh start"}? ` +
+          "This wipes ALL demo holdings, closed trades, PnL and balance. System learning is kept.",
       )
     )
       return;
     setResetBusy(true);
     try {
-      const res = await submitDemoReset();
+      const res = await submitDemoReset(startSol);
       if (!res.ok) window.alert(res.error ?? "Demo reset failed");
       else {
         clearTickerSeries();
@@ -171,14 +194,36 @@ export function SessionWalletBalance({
       <div className="flex shrink-0 flex-col items-stretch gap-2 sm:items-end">
         {showWalletControls && mode === "real" && <WalletPanel />}
         {showDemoReset && isDemo && (
-          <button
-            type="button"
-            onClick={() => void resetDemo()}
-            disabled={resetBusy}
-            className="rounded border border-border px-3 py-1.5 text-xs text-muted hover:bg-panel2 hover:text-fg"
-          >
-            {resetBusy ? "Resetting…" : "Reset demo account"}
-          </button>
+          <div className="flex flex-col items-stretch gap-1 sm:items-end">
+            <label className="flex items-center gap-2 text-[11px] text-muted">
+              <span className="whitespace-nowrap">Starting balance</span>
+              <input
+                type="number"
+                min="0.001"
+                max="10000"
+                step="any"
+                inputMode="decimal"
+                value={startSolInput}
+                onChange={(e) => setStartSolInput(e.target.value)}
+                disabled={resetBusy}
+                placeholder={currentStartSol != null ? String(currentStartSol) : "10"}
+                aria-label="Starting balance in SOL for the next demo reset"
+                className="w-24 rounded border border-border bg-bg px-2 py-1 text-right text-xs tabular-nums text-fg"
+              />
+              <span>SOL</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => void resetDemo()}
+              disabled={resetBusy}
+              className="rounded border border-border px-3 py-1.5 text-xs text-muted hover:bg-panel2 hover:text-fg"
+            >
+              {resetBusy ? "Resetting…" : "Reset demo account"}
+            </button>
+            <span className="text-[10px] text-muted">
+              Leave blank to keep {currentStartSol != null ? `${currentStartSol} SOL` : "the current amount"}.
+            </span>
+          </div>
         )}
         {mode === "real" && !showWalletControls && !realUnlocked && (
           <Link href="/wallet" className="text-xs text-accent hover:underline">
