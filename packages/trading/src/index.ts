@@ -18,6 +18,8 @@ export {
   curveValueRatio,
   curveRealizedPnlSol,
   curveUnrealizedPnlSol,
+  curveExitSettlement,
+  type ExitSettlement,
 } from "./pnl";
 export type { PortfolioSnapshot, RiskCheckInput, RiskCheckResult } from "./risk";
 export { checkRisk } from "./risk";

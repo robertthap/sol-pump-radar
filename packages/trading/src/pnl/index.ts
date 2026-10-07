@@ -67,3 +67,53 @@ export function curveUnrealizedPnlSol(
 ): number {
   return costBasisSol * (curveValueRatio(entryVSol, currentVSol) - 1);
 }
+
+export type ExitSettlement = {
+  /** Capital that actually reached the pool: cost basis minus the entry fee. */
+  deployedSol: number;
+  grossOutSol: number;
+  exitFeeSol: number;
+  priorityFeeSol: number;
+  /** SOL returned to the wallet. */
+  cashInSol: number;
+  /** cashIn minus the FULL cost basis, so it equals the wallet's net change. */
+  pnlSol: number;
+};
+
+/**
+ * Settle one exit leg, entry fee included (H02).
+ *
+ * The entry fee buys nothing: it is skimmed before the order reaches the pool,
+ * so only `costBasis - entryFee` ever compounds. Booking the exit against the
+ * full cost basis therefore refunds the entry fee silently — a 1 SOL round trip
+ * at 1% per side read -1.00% when the true cost is -1.99%, roughly HALVING the
+ * modelled round-trip cost. On a thin edge that is the difference between a
+ * strategy that clears costs and one that does not.
+ *
+ * `entryFeeSol` is the fee attributable to the slice being closed, so a partial
+ * close passes its own share and the arithmetic stays exact across legs.
+ */
+export function curveExitSettlement(input: {
+  entryVSol: number;
+  exitVSol: number;
+  costBasisSol: number;
+  entryFeeSol: number;
+  feeBps: number;
+  priorityFeeSol: number;
+  feesEnabled: boolean;
+}): ExitSettlement {
+  const entryFee = input.feesEnabled ? Math.max(0, input.entryFeeSol) : 0;
+  const deployedSol = Math.max(0, input.costBasisSol - entryFee);
+  const grossOutSol = deployedSol * curveValueRatio(input.entryVSol, input.exitVSol);
+  const exitFeeSol = input.feesEnabled ? (grossOutSol * input.feeBps) / 10_000 : 0;
+  const priorityFeeSol = input.feesEnabled ? Math.max(0, input.priorityFeeSol) : 0;
+  const cashInSol = grossOutSol - exitFeeSol - priorityFeeSol;
+  return {
+    deployedSol,
+    grossOutSol,
+    exitFeeSol,
+    priorityFeeSol,
+    cashInSol,
+    pnlSol: cashInSol - input.costBasisSol,
+  };
+}

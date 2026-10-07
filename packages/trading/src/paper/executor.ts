@@ -3,7 +3,7 @@ import { appendEvent } from "@spr/core";
 import { getRuntimeDb } from "@spr/db";
 import { withTx, loadPortfolio, loadOpenPositions } from "../portfolio";
 import { applySlippage } from "../slippage";
-import { curveValueRatio, curveRealizedPnlSol, curveUnrealizedPnlSol } from "../pnl";
+import { curveValueRatio, curveRealizedPnlSol, curveUnrealizedPnlSol, curveExitSettlement } from "../pnl";
 import { checkRisk } from "../risk";
 import { assertTransition } from "../state-machine";
 import type { PaperRuntimeConfig } from "../config";
@@ -74,6 +74,32 @@ async function quoteOrFail(
 function applyFee(notionalSol: number, feeBps: number, enabled: boolean): number {
   if (!enabled) return 0;
   return (notionalSol * feeBps) / 10_000;
+}
+
+/**
+ * The entry fee attributable to the slice of a position now being closed (H02).
+ *
+ * The fee charged at open is recorded on the OPEN fill, against the position's
+ * ORIGINAL notional. A partial close shrinks paper_positions.notional_sol, so a
+ * later leg must take its share pro rata or the fee is charged more than once.
+ *
+ * Falls back to the configured rate when no OPEN fill exists — positions opened
+ * before fills were recorded, and research positions, whose entry fee equals
+ * notional × rate by construction. Returning 0 would silently refund the fee,
+ * which is the bug this function exists to close.
+ */
+function entryFeeForSlice(
+  sliceNotionalSol: number,
+  openFeeSol: number | null,
+  openNotionalSol: number | null,
+  feeBps: number,
+  enabled: boolean,
+): number {
+  if (!enabled) return 0;
+  if (openFeeSol == null || openNotionalSol == null || !(openNotionalSol > 0)) {
+    return applyFee(sliceNotionalSol, feeBps, true);
+  }
+  return openFeeSol * (sliceNotionalSol / openNotionalSol);
 }
 
 async function maybeLatency(config: PaperRuntimeConfig): Promise<number> {
@@ -251,18 +277,26 @@ export async function closePosition(
 ): Promise<ExecutionResult<{ exitPrice: number; realizedPnlSol: number; pctOfSize: number; reason: string }>> {
   const db = getRuntimeDb();
   const before = await db.execute(sql`
-    SELECT id::text AS id, mint, state, entry_price::float8 AS entry_price,
-      quantity::float8 AS quantity, notional_sol::float8 AS notional_sol,
-      entry_features,
-      session_id::text AS session_id
-    FROM paper_positions
-    WHERE id = ${intent.positionId.toString()}::bigint
+    SELECT p.id::text AS id, p.mint, p.state, p.entry_price::float8 AS entry_price,
+      p.quantity::float8 AS quantity, p.notional_sol::float8 AS notional_sol,
+      p.entry_features,
+      p.session_id::text AS session_id,
+      f.fee_sol::float8 AS entry_fee_sol,
+      f.notional_sol::float8 AS entry_notional_sol
+    FROM paper_positions p
+    LEFT JOIN LATERAL (
+      SELECT fee_sol, notional_sol FROM paper_trade_fills
+      WHERE position_id = p.id AND fill_type = 'OPEN'
+      ORDER BY id LIMIT 1
+    ) f ON TRUE
+    WHERE p.id = ${intent.positionId.toString()}::bigint
   `);
   const row = (before as unknown as {
     rows: Array<{
       id: string; mint: string; state: string; entry_price: number; quantity: number;
       notional_sol: number; session_id: string;
       entry_features: Record<string, unknown> | null;
+      entry_fee_sol: number | null; entry_notional_sol: number | null;
     }>;
   }).rows[0];
   if (!row) return { ok: false, code: "NOT_FOUND", reason: `position ${intent.positionId} missing` };
@@ -319,15 +353,28 @@ export async function closePosition(
   // curve vSol proxy and already carry entry/exit slippage, so squaring the ratio
   // also applies slippage on the correct (price) basis. notional_sol is the SOL
   // cost basis, which makes realized PnL exactly equal the net balance change.
-  const valueRatio = curveValueRatio(row.entry_price, slip.fillPrice);
-  const grossOut = row.notional_sol * valueRatio;
-  const exitFee = applyFee(grossOut, config.feeBps, config.enableFees);
   // Priority-fee drag (A2): the entry leg was NOT charged at open, so charge the
   // round trip (entry + exit) here against realized PnL + balance. Paper otherwise
   // ignores this real on-chain cost and reads optimistically high.
   const priorityRoundTripSol = config.enableFees ? config.priorityFeeSol * 2 : 0;
-  const cashIn = grossOut - exitFee - priorityRoundTripSol;
-  const pnl = cashIn - row.notional_sol;
+  // H02: the TRADING fee at entry was also never charged — it only shrank
+  // `quantity`, which the curve settlement never reads. Carry the recorded entry
+  // fee for the slice being closed so it cannot be refunded here.
+  const settlement = curveExitSettlement({
+    entryVSol: row.entry_price,
+    exitVSol: slip.fillPrice,
+    costBasisSol: row.notional_sol,
+    entryFeeSol: entryFeeForSlice(
+      row.notional_sol, row.entry_fee_sol, row.entry_notional_sol, config.feeBps, config.enableFees,
+    ),
+    feeBps: config.feeBps,
+    priorityFeeSol: priorityRoundTripSol,
+    feesEnabled: config.enableFees,
+  });
+  const grossOut = settlement.grossOutSol;
+  const exitFee = settlement.exitFeeSol;
+  const cashIn = settlement.cashInSol;
+  const pnl = settlement.pnlSol;
   const pct = row.notional_sol > 0 ? cashIn / row.notional_sol - 1 : 0;
 
   return withTx(async (client) => {
@@ -427,19 +474,27 @@ export async function partialClosePosition(
   }
   const db = getRuntimeDb();
   const before = await db.execute(sql`
-    SELECT id::text AS id, mint, state,
-      entry_price::float8 AS entry_price,
-      quantity::float8 AS quantity,
-      notional_sol::float8 AS notional_sol,
-      session_id::text AS session_id,
-      tp1_at_ts
-    FROM paper_positions
-    WHERE id = ${intent.positionId.toString()}::bigint
+    SELECT p.id::text AS id, p.mint, p.state,
+      p.entry_price::float8 AS entry_price,
+      p.quantity::float8 AS quantity,
+      p.notional_sol::float8 AS notional_sol,
+      p.session_id::text AS session_id,
+      p.tp1_at_ts,
+      f.fee_sol::float8 AS entry_fee_sol,
+      f.notional_sol::float8 AS entry_notional_sol
+    FROM paper_positions p
+    LEFT JOIN LATERAL (
+      SELECT fee_sol, notional_sol FROM paper_trade_fills
+      WHERE position_id = p.id AND fill_type = 'OPEN'
+      ORDER BY id LIMIT 1
+    ) f ON TRUE
+    WHERE p.id = ${intent.positionId.toString()}::bigint
   `);
   const row = (before as unknown as {
     rows: Array<{
       id: string; mint: string; state: string; entry_price: number; quantity: number;
       notional_sol: number; session_id: string; tp1_at_ts: Date | null;
+      entry_fee_sol: number | null; entry_notional_sol: number | null;
     }>;
   }).rows[0];
   if (!row) return { ok: false, code: "NOT_FOUND", reason: `position ${intent.positionId} missing` };
@@ -475,16 +530,27 @@ export async function partialClosePosition(
     : { fillPrice: quote.price, slippageBps: 0 };
 
   // Curve value of the sold fraction (value ∝ vSol²; see closePosition).
-  // partialNotional is the SOL cost basis of the slice being sold.
-  const valueRatio = curveValueRatio(row.entry_price, slip.fillPrice);
-  const grossOut = partialNotional * valueRatio;
-  const exitFee = applyFee(grossOut, config.feeBps, config.enableFees);
+  // partialNotional is the SOL cost basis of the slice being sold, and it carries
+  // its pro-rata share of the entry fee so the fee is charged once across legs (H02).
   // Priority-fee drag (A2): one on-chain leg for this partial sell. (The entry
   // leg + final-exit leg are charged at the full close, so a position with one
   // partial pays 3 legs total = entry + partial-sell + final-sell.)
   const priorityLegSol = config.enableFees ? config.priorityFeeSol : 0;
-  const cashIn = grossOut - exitFee - priorityLegSol;
-  const pnl = cashIn - partialNotional;
+  const settlement = curveExitSettlement({
+    entryVSol: row.entry_price,
+    exitVSol: slip.fillPrice,
+    costBasisSol: partialNotional,
+    entryFeeSol: entryFeeForSlice(
+      partialNotional, row.entry_fee_sol, row.entry_notional_sol, config.feeBps, config.enableFees,
+    ),
+    feeBps: config.feeBps,
+    priorityFeeSol: priorityLegSol,
+    feesEnabled: config.enableFees,
+  });
+  const grossOut = settlement.grossOutSol;
+  const exitFee = settlement.exitFeeSol;
+  const cashIn = settlement.cashInSol;
+  const pnl = settlement.pnlSol;
 
   return withTx(async (client) => {
     const upd = await client.query<{ id: string }>(
