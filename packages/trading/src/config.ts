@@ -27,6 +27,16 @@ export type PaperRuntimeConfig = {
    * it or its PnL is optimistically biased and the OOS verdict is untrustworthy.
    */
   priorityFeeSol: number;
+  /**
+   * H09 — new safety limits. These are GATES, not strategy parameters: they can
+   * only ever refuse an entry, never change a price, a size or a threshold.
+   */
+  /** Peak-to-trough equity drawdown past which new entries stop. */
+  maxDrawdownPct: number;
+  /** Market data older than this blocks a new entry. Unknown age counts as stale. */
+  maxDataStalenessMs: number;
+  /** Total notional allowed open in any ONE mint. */
+  maxPerMintSol: number;
   /** Base slippage floor in bps before liquidity impact. */
   baseSlippageBps: number;
   /** Simulated execution latency window (ms) when latency is enabled. */
@@ -62,6 +72,11 @@ export function paperConfigFromEnv(env: NodeJS.ProcessEnv = process.env): PaperR
     feeBps: CURVE_FEE.totalBps,
     baseTxFeeSol: BASE_TX_FEE_SOL,
     priorityFeeSol: num(env.LIVE_PRIORITY_FEE_SOL, 0.0005),
+    maxDrawdownPct: Math.min(1, num(env.PAPER_MAX_DRAWDOWN_PCT, 0.25)),
+    maxDataStalenessMs: num(env.PAPER_MAX_DATA_STALENESS_MS, 15_000),
+    // Defaults to one position's worth: without an explicit limit, concentrating
+    // the whole book in one mint is the failure this gate exists to prevent.
+    maxPerMintSol: num(env.PAPER_MAX_PER_MINT_SOL, num(env.PAPER_MAX_POSITION_SOL, 0.25)),
     baseSlippageBps: 30,
     latencyMinMs: 80,
     latencyMaxMs: 280,

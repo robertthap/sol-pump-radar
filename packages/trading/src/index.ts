@@ -53,6 +53,7 @@ export {
   resetPortfolio,
   todayRealizedLossSol,
   type OpenIntent,
+  type EntryHealth,
   type CloseIntent,
   type PartialCloseIntent,
   type ResetIntent,

@@ -36,11 +36,19 @@ function config(overrides: Partial<ReturnType<Trading["paperConfigFromEnv"]>> = 
     enableFees: true,
     priorityFeeSol: 0,
     maxPositionSol: 10,
+    // H10 per-mint cap defaults to one position's worth; these tests open 1 SOL.
+    maxPerMintSol: 10,
     maxOpenPositions: 50,
     dailyLossLimitSol: 1000,
     ...overrides,
   };
 }
+
+/**
+ * H09 entry health. The gates FAIL CLOSED, so an accounting test must declare a
+ * healthy system or it would be refused before the accounting under test ran.
+ */
+const HEALTHY = { breakerState: "RUNNING" as const, dataAgeMs: 100, feedDegraded: false };
 
 const FLAT = 100;
 const priceAt = (price: number) => async (mint: string) => ({ mint, price, referenceVSol: price });
@@ -64,7 +72,7 @@ describe("paper executor accounting", { skip }, () => {
 
   it("H01: concurrent closes credit the balance exactly once", async () => {
     const cfg = config();
-    const opened = await trading.openPosition({ mint: "H01", sizeSol: 1 }, cfg, priceAt(FLAT));
+    const opened = await trading.openPosition({ mint: "H01", sizeSol: 1 }, cfg, priceAt(FLAT), HEALTHY);
     assert.equal(opened.ok, true);
     if (!opened.ok) return;
     const afterOpen = (await trading.loadPortfolio())!.balanceSol;
@@ -97,7 +105,7 @@ describe("paper executor accounting", { skip }, () => {
     const size = 1;
     const before = (await trading.loadPortfolio())!.balanceSol;
 
-    const opened = await trading.openPosition({ mint: "H02", sizeSol: size }, cfg, priceAt(FLAT));
+    const opened = await trading.openPosition({ mint: "H02", sizeSol: size }, cfg, priceAt(FLAT), HEALTHY);
     assert.equal(opened.ok, true);
     if (!opened.ok) return;
     const closed = await trading.closePosition(
@@ -132,7 +140,7 @@ describe("paper executor accounting", { skip }, () => {
       await trading.ensurePortfolio({ startSol: 10 });
       const before = (await trading.loadPortfolio())!.balanceSol;
 
-      const opened = await trading.openPosition({ mint: `H02-${name}`, sizeSol: 1 }, cfg, priceAt(FLAT));
+      const opened = await trading.openPosition({ mint: `H02-${name}`, sizeSol: 1 }, cfg, priceAt(FLAT), HEALTHY);
       assert.equal(opened.ok, true);
       if (!opened.ok) return;
       const closed = await trading.closePosition(
@@ -157,7 +165,7 @@ describe("paper executor accounting", { skip }, () => {
     const timer = setTimeout(() => { price = 150; }, 20);
     const moving = async (mint: string) => ({ mint, price, referenceVSol: price });
 
-    const opened = await trading.openPosition({ mint: "H03", sizeSol: 1 }, cfg, moving);
+    const opened = await trading.openPosition({ mint: "H03", sizeSol: 1 }, cfg, moving, HEALTHY);
     clearTimeout(timer);
     assert.equal(opened.ok, true);
     if (!opened.ok) return;
@@ -172,7 +180,7 @@ describe("paper executor accounting", { skip }, () => {
     const cfg = config();
     const before = (await trading.loadPortfolio())!.balanceSol;
 
-    const opened = await trading.openPosition({ mint: "H02-partial", sizeSol: 1 }, cfg, priceAt(FLAT));
+    const opened = await trading.openPosition({ mint: "H02-partial", sizeSol: 1 }, cfg, priceAt(FLAT), HEALTHY);
     assert.equal(opened.ok, true);
     if (!opened.ok) return;
 

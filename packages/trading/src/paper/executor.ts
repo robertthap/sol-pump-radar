@@ -11,6 +11,17 @@ import { assertTransition } from "../state-machine";
 import type { PaperRuntimeConfig } from "../config";
 import type { PriceResolver, PriceQuote } from "../pricing";
 
+/**
+ * H09 health of the inputs behind an entry decision. Supplied by the caller
+ * because only the caller knows how old its data is and what the breaker says.
+ * Absent fields FAIL CLOSED in checkRisk — see packages/trading/src/risk.
+ */
+export type EntryHealth = {
+  breakerState?: "RUNNING" | "DEGRADED" | "PAUSED" | "HALTED";
+  dataAgeMs?: number | null;
+  feedDegraded?: boolean;
+};
+
 export type OpenIntent = {
   mint: string;
   symbol?: string | null;
@@ -172,12 +183,18 @@ export async function openPosition(
   intent: OpenIntent,
   config: PaperRuntimeConfig,
   resolvePrice: PriceResolver,
+  health: EntryHealth = {},
 ): Promise<ExecutionResult<{ positionId: bigint; fillPrice: number; slippageBps: number; latencyMs: number; feeSol: number }>> {
   const portfolio = await loadPortfolio();
   if (!portfolio) return { ok: false, code: "NO_PORTFOLIO", reason: "paper_portfolio missing" };
 
   const open = await loadOpenPositions(portfolio.sessionId);
   const todayLoss = await todayRealizedLossSol(portfolio.sessionId);
+  // H10 — exposure already open in THIS mint, from the same snapshot the
+  // position count comes from, so both are consistent.
+  const mintOpenNotionalSol = open
+    .filter((p) => p.mint === intent.mint)
+    .reduce((sum, p) => sum + Number(p.notionalSol ?? 0), 0);
 
   const risk = checkRisk({
     notionalSol: intent.sizeSol,
@@ -188,6 +205,12 @@ export async function openPosition(
     },
     todayLossSol: todayLoss,
     config,
+    breakerState: health.breakerState,
+    dataAgeMs: health.dataAgeMs,
+    feedDegraded: health.feedDegraded,
+    equitySol: portfolio.equitySol,
+    peakEquitySol: portfolio.peakEquitySol,
+    mintOpenNotionalSol,
   });
   if (!risk.ok) return { ok: false, code: risk.code, reason: risk.reason };
 

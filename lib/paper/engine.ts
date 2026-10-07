@@ -1,10 +1,13 @@
 import "server-only";
+import { readState } from "@/lib/circuit-breaker/state";
+import { getIngestorStats } from "@/lib/rpc/stats";
 import {
   paperConfigFromEnv,
   ensurePortfolio,
   loadPortfolio,
   loadOpenPositions,
   openPosition,
+  type EntryHealth,
   closePosition,
   partialClosePosition,
   markToMarket,
@@ -79,10 +82,37 @@ export async function bootPaperEngine(): Promise<void> {
   });
 }
 
+/**
+ * Health of the live feed and the breaker, read HERE rather than asked of every
+ * caller (H09).
+ *
+ * There are five call sites for paperOpen. Requiring each to pass its own view
+ * of system health is how one of them ends up not doing it, so this reads the
+ * real signals once: the circuit breaker, the ingest connection state, and how
+ * long it has been since a message arrived.
+ */
+async function currentEntryHealth(): Promise<EntryHealth> {
+  const [cb, stats] = [await readState(), getIngestorStats()];
+  const subscribed = stats.connState === "subscribed" || stats.connState === "open";
+  return {
+    breakerState: cb.state as EntryHealth["breakerState"],
+    // Never connected means there is no age to report — which checkRisk treats
+    // as stale, not as fresh.
+    dataAgeMs: stats.lastMessageAt == null ? null : Math.max(0, Date.now() - stats.lastMessageAt),
+    // Dropped events mean the buffer is shedding data: the book we would price
+    // against is already incomplete.
+    feedDegraded: !subscribed || stats.eventsDropped > 0,
+  };
+}
+
 export async function paperOpen(
   intent: OpenIntent,
+  /** Override for tests and for callers that genuinely know better. */
+  health?: EntryHealth,
 ): Promise<ExecutionResult<{ positionId: bigint; fillPrice: number; slippageBps: number; latencyMs: number; feeSol: number }>> {
-  return openPosition(intent, getPaperConfig(), paperPriceResolver);
+  return openPosition(
+    intent, getPaperConfig(), paperPriceResolver, health ?? (await currentEntryHealth()),
+  );
 }
 
 export async function paperClose(
