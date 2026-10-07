@@ -50,6 +50,12 @@ const EnvSchema = z.object({
   PAPER_MARK_TO_MARKET_MS: z.coerce.number().int().min(2000).max(60_000).default(10_000),
   AUTO_TUNE: z.enum(["on", "off"]).default("off"),
   /**
+   * M07 — commit this build was made from, stamped on every paper trade so a
+   * multi-day run can be split by code version. Optional: absent records as
+   * "unknown" rather than failing a boot.
+   */
+  GIT_SHA: z.string().optional(),
+  /**
    * Runtime profile — gates live execution at startup.
    * - paper_safe: no live tx; quick-buy/sell rejected
    * - dev: devnet only

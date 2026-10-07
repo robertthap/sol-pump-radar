@@ -1,5 +1,10 @@
 export type { PaperRuntimeConfig } from "./config";
 export {
+  canonicalConfig, configHash, measurementIntegrity, tradeProvenance,
+  type OutcomeAffectingConfig, type AdaptiveSwitches,
+  type MeasurementIntegrity, type TradeProvenance,
+} from "./provenance";
+export {
   RISK_TIMEZONE, startOfRiskDay, riskDayWindow, riskDayKey, isSameRiskDay, dailyLossSol,
 } from "./risk-day";
 export {

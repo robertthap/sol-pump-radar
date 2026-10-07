@@ -1,5 +1,6 @@
 import "server-only";
 import { readState } from "@/lib/circuit-breaker/state";
+import { env } from "@/lib/env";
 import { getIngestorStats } from "@/lib/rpc/stats";
 import {
   paperConfigFromEnv,
@@ -94,8 +95,20 @@ export async function bootPaperEngine(): Promise<void> {
 async function currentEntryHealth(): Promise<EntryHealth> {
   const [cb, stats] = [await readState(), getIngestorStats()];
   const subscribed = stats.connState === "subscribed" || stats.connState === "open";
+  const e = env();
   return {
     breakerState: cb.state as EntryHealth["breakerState"],
+    // M07 — set GIT_SHA at build/deploy so every trade names the commit that
+    // made it. Absent, it records "unknown" rather than a blank.
+    codeVersion: e.GIT_SHA,
+    // M06 — the adaptive switches as they stood at decision time, so a trade
+    // taken while a learner was running is marked not measurement-grade rather
+    // than quietly averaged in with the clean ones.
+    adaptiveSwitches: {
+      autoTune: e.AUTO_TUNE,
+      shadowLearner: e.SHADOW_LEARNER,
+      autoContinuation: e.AUTO_CONTINUATION,
+    },
     // Never connected means there is no age to report — which checkRisk treats
     // as stale, not as fresh.
     dataAgeMs: stats.lastMessageAt == null ? null : Math.max(0, Date.now() - stats.lastMessageAt),

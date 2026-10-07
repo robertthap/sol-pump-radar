@@ -203,4 +203,43 @@ describe("paper executor accounting", { skip }, () => {
       `balance moved ${delta} but booked ${booked} across the two legs`,
     );
   });
+
+  it("M06/M07: every trade records its code version, config hash and measurement cleanliness", async () => {
+    const cfg = config();
+    const opened = await trading.openPosition({ mint: "PROV", sizeSol: 1 }, cfg, priceAt(FLAT), {
+      ...HEALTHY,
+      codeVersion: "deadbee",
+      adaptiveSwitches: { autoTune: "on", shadowLearner: "off", autoContinuation: "off" },
+    });
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+
+    const row = await db.getPool().query<{ features: Record<string, unknown> }>(
+      "SELECT entry_features AS features FROM paper_positions WHERE id = $1",
+      [opened.data.positionId.toString()],
+    );
+    const f = row.rows[0]!.features;
+    assert.equal(f.codeVersion, "deadbee");
+    assert.match(String(f.configHash), /^[0-9a-f]{8}$/);
+    assert.equal(f.measurementClean, false, "AUTO_TUNE was on — not measurement-grade");
+    assert.deepEqual(f.adaptiveActive, ["AUTO_TUNE"]);
+  });
+
+  it("M07: provenance does not clobber the caller's own entry features", async () => {
+    const cfg = config();
+    const opened = await trading.openPosition(
+      { mint: "PROV2", sizeSol: 1, entryFeatures: { research_strategy: "curveLadder", score: 7 } },
+      cfg, priceAt(FLAT), { ...HEALTHY, codeVersion: "cafe123" },
+    );
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+    const row = await db.getPool().query<{ features: Record<string, unknown> }>(
+      "SELECT entry_features AS features FROM paper_positions WHERE id = $1",
+      [opened.data.positionId.toString()],
+    );
+    const f = row.rows[0]!.features;
+    assert.equal(f.research_strategy, "curveLadder", "caller features must survive");
+    assert.equal(f.score, 7);
+    assert.equal(f.codeVersion, "cafe123");
+  });
 });

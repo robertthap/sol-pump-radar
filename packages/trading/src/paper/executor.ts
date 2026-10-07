@@ -5,6 +5,7 @@ import { withTx, loadPortfolio, loadOpenPositions } from "../portfolio";
 import { applySlippage } from "../slippage";
 import { curveValueRatio, curveRealizedPnlSol, curveUnrealizedPnlSol, curveExitSettlement } from "../pnl";
 import { txCostSol, type FeeModel } from "../fees";
+import { tradeProvenance, type AdaptiveSwitches } from "../provenance";
 import { dailyLossSol, riskDayWindow } from "../risk-day";
 import { checkRisk } from "../risk";
 import { assertTransition } from "../state-machine";
@@ -20,6 +21,10 @@ export type EntryHealth = {
   breakerState?: "RUNNING" | "DEGRADED" | "PAUSED" | "HALTED";
   dataAgeMs?: number | null;
   feedDegraded?: boolean;
+  /** M07 — commit this worker is running. Recorded on the trade. */
+  codeVersion?: string;
+  /** M06 — adaptive switches at decision time. Recorded on the trade. */
+  adaptiveSwitches?: AdaptiveSwitches;
 };
 
 export type OpenIntent = {
@@ -234,6 +239,15 @@ export async function openPosition(
       })
     : { fillPrice: quote.price, slippageBps: 0 };
 
+  // M06/M07 — stamp WHICH code and WHICH settings produced this trade, and
+  // whether anything adaptive was running at the time. Without this a multi-day
+  // run is an average over an unknown mixture of configurations.
+  const provenance = tradeProvenance({
+    codeVersion: health.codeVersion,
+    config,
+    switches: health.adaptiveSwitches ?? { autoTune: undefined, shadowLearner: undefined, autoContinuation: undefined },
+  });
+
   const feeSol = applyFee(intent.sizeSol, config.feeBps, config.enableFees);
   const quantity = (intent.sizeSol - feeSol) / slip.fillPrice;
   const cashOut = intent.sizeSol;
@@ -270,7 +284,7 @@ export async function openPosition(
         intent.sizeSol,
         sl,
         tp,
-        intent.entryFeatures ? JSON.stringify(intent.entryFeatures) : null,
+        JSON.stringify({ ...(intent.entryFeatures ?? {}), ...provenance }),
         intent.modulesAtEntry ? JSON.stringify(intent.modulesAtEntry) : null,
         intent.decisionId ? intent.decisionId.toString() : null,
       ],
