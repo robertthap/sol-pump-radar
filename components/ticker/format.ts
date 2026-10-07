@@ -39,12 +39,26 @@ export function plainSol(v: number | null | undefined, digits = 3): string {
   return `${v.toFixed(digits)} SOL`;
 }
 
-/** "A$42.50" (or "-A$3.10"). Locale-aware, two decimals. */
-export function aud(sol: number | null | undefined, solAud: number): string {
+/**
+ * "A$42.50" (or "-A$3.10"). Locale-aware, two decimals.
+ *
+ * M01: a NEVER-FETCHED rate is a hardcoded guess, so converting with it
+ * produces a number with no meaning — say so instead of printing "A$0.00",
+ * which reads as a real zero. A merely STALE rate was real once, so show it
+ * and mark it. Same rule as solToAudDisplay; this is the other render path,
+ * and it was missed when that one was fixed.
+ */
+export function aud(
+  sol: number | null | undefined,
+  solAud: number,
+  freshness?: { stale?: boolean; fallback?: boolean },
+): string {
   if (sol == null || !Number.isFinite(sol) || !Number.isFinite(solAud)) return "—";
+  if (freshness?.fallback) return "A$ rate unavailable";
   const v = sol * solAud;
   const abs = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${v < 0 ? "-" : ""}A$${abs}`;
+  const text = `${v < 0 ? "-" : ""}A$${abs}`;
+  return freshness?.stale ? `${text} (stale rate)` : text;
 }
 
 /** "$12.4K" / "$1.2M" / "$830". */

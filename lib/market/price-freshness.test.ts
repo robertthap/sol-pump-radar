@@ -83,3 +83,25 @@ describe("a failed fetch must not promote the fallback (M01 regression)", () => 
     }
   });
 });
+
+describe("aud() formatter respects rate freshness (M01)", () => {
+  it("refuses to convert with a never-fetched rate", async () => {
+    const { aud } = await import("@/components/ticker/format");
+    assert.equal(
+      aud(1.5, 230, { fallback: true, stale: true }), "A$ rate unavailable",
+      "A$345.00 from a hardcoded guess is a number with no meaning",
+    );
+  });
+
+  it("marks a stale but real rate", async () => {
+    const { aud } = await import("@/components/ticker/format");
+    assert.equal(aud(1, 230, { stale: true }), "A$230.00 (stale rate)");
+  });
+
+  it("formats a fresh rate exactly as before, including the sign", async () => {
+    const { aud } = await import("@/components/ticker/format");
+    assert.equal(aud(1, 230, { stale: false, fallback: false }), "A$230.00");
+    assert.equal(aud(-1, 230), "-A$230.00");
+    assert.equal(aud(null, 230), "—");
+  });
+});

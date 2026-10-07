@@ -104,7 +104,7 @@ export function PnlHero() {
               {p ? signedSol(p.totalPnlSol, 4) : "—"}
             </span>
           </div>
-          <p className="mt-1 text-sm text-muted tabular-nums">{p ? aud(p.totalPnlSol, data!.solAud) : "—"}</p>
+          <p className="mt-1 text-sm text-muted tabular-nums">{p ? aud(p.totalPnlSol, data!.solAud, { stale: data!.solPriceStale, fallback: data!.solPriceFallback }) : "—"}</p>
 
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
             <div>
